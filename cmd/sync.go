@@ -20,20 +20,27 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/rest"
 	clientcmd "k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
 
 var (
 	greenhouseCentralClusterKubeconfig string
+	greenhouseCentralClusterContext    string
+	greenhouseCentralClusterNamespace  string
 	greenhouseRemoteClusterKubeconfig  string
+	greenhouseRemoteClusterName        string
 	prefix                             string
 	mergeIdenticalUsers                bool
 )
 
 func init() {
 	syncCmd.Flags().StringVar(&greenhouseCentralClusterKubeconfig, "central-cluster-kubeconfig", clientcmd.RecommendedHomeFile, "kubeconfig for central Greenhouse cluster")
+	syncCmd.Flags().StringVar(&greenhouseCentralClusterContext, "central-cluster-context", "", "context in central-cluster-kubeconfig,  the context in the file is used if this flag is not set")
+	syncCmd.Flags().StringVar(&greenhouseCentralClusterNamespace, "central-cluster-namespace", "", "namespace for central-cluster-kubeconfig, if not set, kubeconfigs from all namespaces are retrieved")
 	syncCmd.Flags().StringVar(&greenhouseRemoteClusterKubeconfig, "remote-cluster-kubeconfig", clientcmd.RecommendedHomeFile, "kubeconfig for remote Greenhouse clusters")
+	syncCmd.Flags().StringVar(&greenhouseRemoteClusterName, "remote-cluster-name", "", "name of the remote cluster, if not set (by default) all clusters are retrieved")
 	syncCmd.Flags().StringVar(&prefix, "prefix", "cloudctl", "prefix for kubeconfig entries. It is used to separate and manage the entries of this tool only")
 	syncCmd.Flags().BoolVar(&mergeIdenticalUsers, "merge-identical-users", true, "merge identical user information in kubeconfig file so that you only login once for the clusters that share the same auth info")
 }
@@ -53,6 +60,13 @@ func runSync(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to build central kubeconfig: %w", err)
 	}
 
+	if greenhouseCentralClusterContext != "" {
+		centralConfig, err = configWithContext(greenhouseCentralClusterContext, greenhouseCentralClusterKubeconfig)
+		if err != nil {
+			return fmt.Errorf("failed to build central kubeconfig with context %s: %w", greenhouseCentralClusterContext, err)
+		}
+	}
+
 	dynamicClient, err := dynamic.NewForConfig(centralConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create dynamic client: %w", err)
@@ -64,12 +78,24 @@ func runSync(cmd *cobra.Command, args []string) error {
 		Resource: "clusterkubeconfigs",
 	}
 
-	unstructuredList, err := dynamicClient.Resource(gvr).Namespace("ccloud").List(cmd.Context(), metav1.ListOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to list ClusterKubeconfigs: %w", err)
-	}
+	var items []unstructured.Unstructured
 
-	if len(unstructuredList.Items) == 0 {
+	// If user wants a single remote cluster, do a GET instead of a List.
+	if greenhouseRemoteClusterName != "" {
+		unstructuredObj, err := dynamicClient.Resource(gvr).Namespace(greenhouseCentralClusterNamespace).
+			Get(cmd.Context(), greenhouseRemoteClusterName, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to get ClusterKubeconfig %q: %w", greenhouseRemoteClusterName, err)
+		}
+		items = append(items, *unstructuredObj)
+	} else {
+		unstructuredList, err := dynamicClient.Resource(gvr).Namespace(greenhouseCentralClusterNamespace).List(cmd.Context(), metav1.ListOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to list ClusterKubeconfigs: %w", err)
+		}
+		items = unstructuredList.Items
+	}
+	if len(items) == 0 {
 		log.Println("No ClusterKubeconfigs found to sync.")
 		return nil
 	}
@@ -83,7 +109,7 @@ func runSync(cmd *cobra.Command, args []string) error {
 		localConfig = clientcmdapi.NewConfig()
 	}
 
-	serverConfig, err := buildIncomingKubeconfig(unstructuredList.Items)
+	serverConfig, err := buildIncomingKubeconfig(items)
 	if err != nil {
 		return fmt.Errorf("failed to create server config: %w", err)
 	}
@@ -446,4 +472,12 @@ func mergeAuthInfo(serverAuth, localAuth *clientcmdapi.AuthInfo) *clientcmdapi.A
 	// For example, ClientCertificateData and ClientKeyData are already handled
 
 	return mergedAuth
+}
+
+func configWithContext(context, kubeconfigPath string) (*rest.Config, error) {
+	return clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+		&clientcmd.ClientConfigLoadingRules{ExplicitPath: kubeconfigPath},
+		&clientcmd.ConfigOverrides{
+			CurrentContext: context,
+		}).ClientConfig()
 }
