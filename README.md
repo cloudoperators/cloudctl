@@ -6,9 +6,26 @@
 
 Unified Kubernetes cli for the cloud.
 
-## Requirements and Setup
+```
+cloudctl is a command line interface that helps:
+    
+    1) Fetch and merge kubeconfigs from central Greenhouse cluster
 
-*Insert a short description what is required to get your project running...*
+Usage:
+  cloudctl [command]
+
+Available Commands:
+  completion  Generate the autocompletion script for the specified shell
+  help        Help about any command
+  sync        Fetches remote kubeconfigs from Greenhouse cluster and merges them into your local config
+
+Flags:
+  -h, --help   help for cloudctl
+```
+
+## Requirements and Setup
+Download the latest release from [here](https://github.com/cloudoperators/cloudctl/releases), move to a location in PATH and update file permissions.
+
 
 ## Support, Feedback, Contributing
 
