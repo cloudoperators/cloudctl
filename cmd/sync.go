@@ -22,21 +22,21 @@ import (
 )
 
 var (
-	greenhouseCentralClusterKubeconfig string
-	greenhouseCentralClusterContext    string
-	greenhouseCentralClusterNamespace  string
-	greenhouseRemoteClusterKubeconfig  string
-	greenhouseRemoteClusterName        string
-	prefix                             string
-	mergeIdenticalUsers                bool
+	greenhouseClusterKubeconfig string
+	greenhouseClusterContext    string
+	greenhouseClusterNamespace  string
+	remoteClusterKubeconfig     string
+	remoteClusterName           string
+	prefix                      string
+	mergeIdenticalUsers         bool
 )
 
 func init() {
-	syncCmd.Flags().StringVar(&greenhouseCentralClusterKubeconfig, "central-cluster-kubeconfig", clientcmd.RecommendedHomeFile, "kubeconfig for central Greenhouse cluster")
-	syncCmd.Flags().StringVar(&greenhouseCentralClusterContext, "central-cluster-context", "", "context in central-cluster-kubeconfig,  the context in the file is used if this flag is not set")
-	syncCmd.Flags().StringVar(&greenhouseCentralClusterNamespace, "central-cluster-namespace", "", "namespace for central-cluster-kubeconfig, if not set, kubeconfigs from all namespaces are retrieved")
-	syncCmd.Flags().StringVar(&greenhouseRemoteClusterKubeconfig, "remote-cluster-kubeconfig", clientcmd.RecommendedHomeFile, "kubeconfig for remote Greenhouse clusters")
-	syncCmd.Flags().StringVar(&greenhouseRemoteClusterName, "remote-cluster-name", "", "name of the remote cluster, if not set (by default) all clusters are retrieved")
+	syncCmd.Flags().StringVar(&greenhouseClusterKubeconfig, "greenhouse-cluster-kubeconfig", clientcmd.RecommendedHomeFile, "kubeconfig for Greenhouse cluster")
+	syncCmd.Flags().StringVar(&greenhouseClusterContext, "greenhouse-cluster-context", "", "context in greenhouse-cluster-kubeconfig,  the context in the file is used if this flag is not set")
+	syncCmd.Flags().StringVar(&greenhouseClusterNamespace, "greenhouse-cluster-namespace", "", "namespace for greenhouse-cluster-kubeconfig, if not set, kubeconfigs from all namespaces are retrieved")
+	syncCmd.Flags().StringVar(&remoteClusterKubeconfig, "remote-cluster-kubeconfig", clientcmd.RecommendedHomeFile, "kubeconfig for remote clusters")
+	syncCmd.Flags().StringVar(&remoteClusterName, "remote-cluster-name", "", "name of the remote cluster, if not set (by default) all clusters are retrieved")
 	syncCmd.Flags().StringVar(&prefix, "prefix", "cloudctl", "prefix for kubeconfig entries. It is used to separate and manage the entries of this tool only")
 	syncCmd.Flags().BoolVar(&mergeIdenticalUsers, "merge-identical-users", true, "merge identical user information in kubeconfig file so that you only login once for the clusters that share the same auth info")
 }
@@ -44,22 +44,22 @@ func init() {
 var (
 	syncCmd = &cobra.Command{
 		Use:   "sync",
-		Short: "Fetches remote kubeconfigs from Greenhouse cluster and merges them into your local config",
+		Short: "Fetches kubeconfigs of remote clusters from Greenhouse cluster and merges them into your local config",
 		RunE:  runSync,
 	}
 )
 
 func runSync(cmd *cobra.Command, args []string) error {
 
-	centralConfig, err := clientcmd.BuildConfigFromFlags("", greenhouseCentralClusterKubeconfig)
+	centralConfig, err := clientcmd.BuildConfigFromFlags("", greenhouseClusterKubeconfig)
 	if err != nil {
-		return fmt.Errorf("failed to build central kubeconfig: %w", err)
+		return fmt.Errorf("failed to build greenhouse kubeconfig: %w", err)
 	}
 
-	if greenhouseCentralClusterContext != "" {
-		centralConfig, err = configWithContext(greenhouseCentralClusterContext, greenhouseCentralClusterKubeconfig)
+	if greenhouseClusterContext != "" {
+		centralConfig, err = configWithContext(greenhouseClusterContext, greenhouseClusterKubeconfig)
 		if err != nil {
-			return fmt.Errorf("failed to build central kubeconfig with context %s: %w", greenhouseCentralClusterContext, err)
+			return fmt.Errorf("failed to build greenhouse kubeconfig with context %s: %w", greenhouseClusterContext, err)
 		}
 	}
 
@@ -80,15 +80,15 @@ func runSync(cmd *cobra.Command, args []string) error {
 
 	// If a specific remote cluster name is provided, fetch that single resource;
 	// otherwise, list all ClusterKubeconfigs in the given namespace.
-	if greenhouseRemoteClusterName != "" {
+	if remoteClusterName != "" {
 		var ckc v1alpha1.ClusterKubeconfig
-		if err := c.Get(ctx, client.ObjectKey{Namespace: greenhouseCentralClusterNamespace, Name: greenhouseRemoteClusterName}, &ckc); err != nil {
-			return fmt.Errorf("failed to get ClusterKubeconfig %q: %w", greenhouseRemoteClusterName, err)
+		if err := c.Get(ctx, client.ObjectKey{Namespace: greenhouseClusterNamespace, Name: remoteClusterName}, &ckc); err != nil {
+			return fmt.Errorf("failed to get ClusterKubeconfig %q: %w", remoteClusterName, err)
 		}
 		clusterKubeconfigs = append(clusterKubeconfigs, ckc)
 	} else {
 		var list v1alpha1.ClusterKubeconfigList
-		if err := c.List(ctx, &list, client.InNamespace(greenhouseCentralClusterNamespace)); err != nil {
+		if err := c.List(ctx, &list, client.InNamespace(greenhouseClusterNamespace)); err != nil {
 			return fmt.Errorf("failed to list ClusterKubeconfigs: %w", err)
 		}
 		clusterKubeconfigs = list.Items
@@ -98,7 +98,7 @@ func runSync(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	localConfig, err := clientcmd.LoadFromFile(greenhouseRemoteClusterKubeconfig)
+	localConfig, err := clientcmd.LoadFromFile(remoteClusterKubeconfig)
 	if err != nil {
 		return fmt.Errorf("failed to load local kubeconfig: %w", err)
 	}
@@ -117,12 +117,12 @@ func runSync(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to merge ClusterKubeconfig: %w", err)
 	}
 
-	err = writeConfig(localConfig, greenhouseRemoteClusterKubeconfig)
+	err = writeConfig(localConfig, remoteClusterKubeconfig)
 	if err != nil {
 		return fmt.Errorf("failed to write merged kubeconfig: %w", err)
 	}
 
-	log.Println("Successfully synced and merged the new cluster kubeconfig with your local config.")
+	log.Println("Successfully synced and merged into your local config.")
 	return nil
 }
 
