@@ -12,17 +12,13 @@ import (
 	"maps"
 	"strings"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-
 	"github.com/cloudoperators/greenhouse/pkg/apis/greenhouse/v1alpha1"
 	"github.com/spf13/cobra"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
 	clientcmd "k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 var (
@@ -67,35 +63,37 @@ func runSync(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	dynamicClient, err := dynamic.NewForConfig(centralConfig)
+	// Create a scheme and register Greenhouse types.
+	scheme := runtime.NewScheme()
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		return fmt.Errorf("failed to add greenhouse scheme: %w", err)
+	}
+
+	// Create a typed client.
+	c, err := client.New(centralConfig, client.Options{Scheme: scheme})
 	if err != nil {
-		return fmt.Errorf("failed to create dynamic client: %w", err)
+		return fmt.Errorf("failed to create client: %w", err)
 	}
 
-	gvr := schema.GroupVersionResource{
-		Group:    "greenhouse.sap",
-		Version:  "v1alpha1",
-		Resource: "clusterkubeconfigs",
-	}
+	ctx := cmd.Context()
+	var clusterKubeconfigs []v1alpha1.ClusterKubeconfig
 
-	var items []unstructured.Unstructured
-
-	// If user wants a single remote cluster, do a GET instead of a List.
+	// If a specific remote cluster name is provided, fetch that single resource;
+	// otherwise, list all ClusterKubeconfigs in the given namespace.
 	if greenhouseRemoteClusterName != "" {
-		unstructuredObj, err := dynamicClient.Resource(gvr).Namespace(greenhouseCentralClusterNamespace).
-			Get(cmd.Context(), greenhouseRemoteClusterName, metav1.GetOptions{})
-		if err != nil {
+		var ckc v1alpha1.ClusterKubeconfig
+		if err := c.Get(ctx, client.ObjectKey{Namespace: greenhouseCentralClusterNamespace, Name: greenhouseRemoteClusterName}, &ckc); err != nil {
 			return fmt.Errorf("failed to get ClusterKubeconfig %q: %w", greenhouseRemoteClusterName, err)
 		}
-		items = append(items, *unstructuredObj)
+		clusterKubeconfigs = append(clusterKubeconfigs, ckc)
 	} else {
-		unstructuredList, err := dynamicClient.Resource(gvr).Namespace(greenhouseCentralClusterNamespace).List(cmd.Context(), metav1.ListOptions{})
-		if err != nil {
+		var list v1alpha1.ClusterKubeconfigList
+		if err := c.List(ctx, &list, client.InNamespace(greenhouseCentralClusterNamespace)); err != nil {
 			return fmt.Errorf("failed to list ClusterKubeconfigs: %w", err)
 		}
-		items = unstructuredList.Items
+		clusterKubeconfigs = list.Items
 	}
-	if len(items) == 0 {
+	if len(clusterKubeconfigs) == 0 {
 		log.Println("No ClusterKubeconfigs found to sync.")
 		return nil
 	}
@@ -109,7 +107,7 @@ func runSync(cmd *cobra.Command, args []string) error {
 		localConfig = clientcmdapi.NewConfig()
 	}
 
-	serverConfig, err := buildIncomingKubeconfig(items)
+	serverConfig, err := buildIncomingKubeconfig(clusterKubeconfigs)
 	if err != nil {
 		return fmt.Errorf("failed to create server config: %w", err)
 	}
@@ -128,43 +126,38 @@ func runSync(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func buildIncomingKubeconfig(items []unstructured.Unstructured) (*clientcmdapi.Config, error) {
+// buildIncomingKubeconfig converts the list of typed ClusterKubeconfig objects
+// into a clientcmdapi.Config.
+func buildIncomingKubeconfig(items []v1alpha1.ClusterKubeconfig) (*clientcmdapi.Config, error) {
 	kubeconfig := clientcmdapi.NewConfig()
 
-	for _, unstructuredItem := range items {
-		var ckc v1alpha1.ClusterKubeconfig
-		err := runtime.DefaultUnstructuredConverter.FromUnstructured(unstructuredItem.Object, &ckc)
-		if err != nil {
-			return nil, fmt.Errorf("failed to convert unstructured to ClusterKubeconfig: %w", err)
-		}
-
-		// Assuming each ClusterKubeconfig has exactly one context, authInfo, and cluster
+	for _, ckc := range items {
+		// Assuming each ClusterKubeconfig has exactly one context, authInfo, and cluster.
 		if len(ckc.Spec.Kubeconfig.Contexts) > 0 {
-			ctx := ckc.Spec.Kubeconfig.Contexts[0]
-			kubeconfig.Contexts[ctx.Name] = &clientcmdapi.Context{
-				Cluster:   ctx.Context.Cluster,
-				AuthInfo:  ctx.Context.AuthInfo,
-				Namespace: ctx.Context.Namespace,
+			ctxItem := ckc.Spec.Kubeconfig.Contexts[0]
+			kubeconfig.Contexts[ctxItem.Name] = &clientcmdapi.Context{
+				Cluster:   ctxItem.Context.Cluster,
+				AuthInfo:  ctxItem.Context.AuthInfo,
+				Namespace: ctxItem.Context.Namespace,
 			}
 		}
 
 		if len(ckc.Spec.Kubeconfig.AuthInfo) > 0 {
-			auth := ckc.Spec.Kubeconfig.AuthInfo[0].AuthInfo
-			kubeconfig.AuthInfos[ckc.Spec.Kubeconfig.AuthInfo[0].Name] = &clientcmdapi.AuthInfo{
-				ClientCertificateData: auth.ClientCertificateData,
-				ClientKeyData:         auth.ClientKeyData,
-				AuthProvider:          &auth.AuthProvider,
+			authItem := ckc.Spec.Kubeconfig.AuthInfo[0]
+			kubeconfig.AuthInfos[authItem.Name] = &clientcmdapi.AuthInfo{
+				ClientCertificateData: authItem.AuthInfo.ClientCertificateData,
+				ClientKeyData:         authItem.AuthInfo.ClientKeyData,
+				AuthProvider:          &authItem.AuthInfo.AuthProvider,
 			}
 		}
 
 		if len(ckc.Spec.Kubeconfig.Clusters) > 0 {
-			cluster := ckc.Spec.Kubeconfig.Clusters[0].Cluster
-			kubeconfig.Clusters[ckc.Spec.Kubeconfig.Clusters[0].Name] = &clientcmdapi.Cluster{
-				Server:                   cluster.Server,
-				CertificateAuthorityData: cluster.CertificateAuthorityData,
+			clusterItem := ckc.Spec.Kubeconfig.Clusters[0]
+			kubeconfig.Clusters[clusterItem.Name] = &clientcmdapi.Cluster{
+				Server:                   clusterItem.Cluster.Server,
+				CertificateAuthorityData: clusterItem.Cluster.CertificateAuthorityData,
 			}
 		}
-
 	}
 
 	return kubeconfig, nil
