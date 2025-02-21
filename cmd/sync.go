@@ -32,12 +32,12 @@ var (
 )
 
 func init() {
-	syncCmd.Flags().StringVar(&greenhouseClusterKubeconfig, "greenhouse-cluster-kubeconfig", clientcmd.RecommendedHomeFile, "kubeconfig for Greenhouse cluster")
-	syncCmd.Flags().StringVar(&greenhouseClusterContext, "greenhouse-cluster-context", "", "context in greenhouse-cluster-kubeconfig,  the context in the file is used if this flag is not set")
-	syncCmd.Flags().StringVar(&greenhouseClusterNamespace, "greenhouse-cluster-namespace", "", "namespace for greenhouse-cluster-kubeconfig, if not set, kubeconfigs from all namespaces are retrieved")
-	syncCmd.Flags().StringVar(&remoteClusterKubeconfig, "remote-cluster-kubeconfig", clientcmd.RecommendedHomeFile, "kubeconfig for remote clusters")
-	syncCmd.Flags().StringVar(&remoteClusterName, "remote-cluster-name", "", "name of the remote cluster, if not set (by default) all clusters are retrieved")
-	syncCmd.Flags().StringVar(&prefix, "prefix", "cloudctl", "prefix for kubeconfig entries. It is used to separate and manage the entries of this tool only")
+	syncCmd.Flags().StringVarP(&greenhouseClusterKubeconfig, "greenhouse-cluster-kubeconfig", "k", clientcmd.RecommendedHomeFile, "kubeconfig file path for Greenhouse cluster")
+	syncCmd.Flags().StringVarP(&greenhouseClusterContext, "greenhouse-cluster-context", "c", "", "context in greenhouse-cluster-kubeconfig, the context in the file is used if this flag is not set")
+	syncCmd.Flags().StringVarP(&greenhouseClusterNamespace, "greenhouse-cluster-namespace", "n", "", "namespace for greenhouse-cluster-kubeconfig, if not set, kubeconfigs from all namespaces are retrieved")
+	syncCmd.Flags().StringVarP(&remoteClusterKubeconfig, "remote-cluster-kubeconfig", "r", clientcmd.RecommendedHomeFile, "kubeconfig file path for remote clusters")
+	syncCmd.Flags().StringVar(&remoteClusterName, "remote-cluster-name", "", "name of the remote cluster, if not set all clusters are retrieved")
+	syncCmd.Flags().StringVar(&prefix, "prefix", "cloudctl", "prefix for kubeconfig entries. it is used to separate and manage the entries of this tool only")
 	syncCmd.Flags().BoolVar(&mergeIdenticalUsers, "merge-identical-users", true, "merge identical user information in kubeconfig file so that you only login once for the clusters that share the same auth info")
 }
 
