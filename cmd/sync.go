@@ -34,7 +34,8 @@ var (
 func init() {
 	syncCmd.Flags().StringVarP(&greenhouseClusterKubeconfig, "greenhouse-cluster-kubeconfig", "k", clientcmd.RecommendedHomeFile, "kubeconfig file path for Greenhouse cluster")
 	syncCmd.Flags().StringVarP(&greenhouseClusterContext, "greenhouse-cluster-context", "c", "", "context in greenhouse-cluster-kubeconfig, the context in the file is used if this flag is not set")
-	syncCmd.Flags().StringVarP(&greenhouseClusterNamespace, "greenhouse-cluster-namespace", "n", "", "namespace for greenhouse-cluster-kubeconfig, if not set, kubeconfigs from all namespaces are retrieved")
+	syncCmd.Flags().StringVarP(&greenhouseClusterNamespace, "greenhouse-cluster-namespace", "n", "", "namespace for greenhouse-cluster-kubeconfig, it is the same value as Greenhouse organization")
+	syncCmd.MarkFlagRequired("greenhouse-cluster-namespace")
 	syncCmd.Flags().StringVarP(&remoteClusterKubeconfig, "remote-cluster-kubeconfig", "r", clientcmd.RecommendedHomeFile, "kubeconfig file path for remote clusters")
 	syncCmd.Flags().StringVar(&remoteClusterName, "remote-cluster-name", "", "name of the remote cluster, if not set all clusters are retrieved")
 	syncCmd.Flags().StringVar(&prefix, "prefix", "cloudctl", "prefix for kubeconfig entries. it is used to separate and manage the entries of this tool only")
