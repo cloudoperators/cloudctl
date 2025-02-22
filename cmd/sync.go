@@ -12,69 +12,94 @@ import (
 	"maps"
 	"strings"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-
 	"github.com/cloudoperators/greenhouse/pkg/apis/greenhouse/v1alpha1"
 	"github.com/spf13/cobra"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/rest"
 	clientcmd "k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 var (
-	greenhouseCentralClusterKubeconfig string
-	greenhouseRemoteClusterKubeconfig  string
-	prefix                             string
-	mergeIdenticalUsers                bool
+	greenhouseClusterKubeconfig string
+	greenhouseClusterContext    string
+	greenhouseClusterNamespace  string
+	remoteClusterKubeconfig     string
+	remoteClusterName           string
+	prefix                      string
+	mergeIdenticalUsers         bool
 )
 
 func init() {
-	syncCmd.Flags().StringVar(&greenhouseCentralClusterKubeconfig, "central-cluster-kubeconfig", clientcmd.RecommendedHomeFile, "kubeconfig for central Greenhouse cluster")
-	syncCmd.Flags().StringVar(&greenhouseRemoteClusterKubeconfig, "remote-cluster-kubeconfig", clientcmd.RecommendedHomeFile, "kubeconfig for remote Greenhouse clusters")
-	syncCmd.Flags().StringVar(&prefix, "prefix", "cloudctl", "prefix for kubeconfig entries. It is used to separate and manage the entries of this tool only")
+	syncCmd.Flags().StringVarP(&greenhouseClusterKubeconfig, "greenhouse-cluster-kubeconfig", "k", clientcmd.RecommendedHomeFile, "kubeconfig file path for Greenhouse cluster")
+	syncCmd.Flags().StringVarP(&greenhouseClusterContext, "greenhouse-cluster-context", "c", "", "context in greenhouse-cluster-kubeconfig, the context in the file is used if this flag is not set")
+	syncCmd.Flags().StringVarP(&greenhouseClusterNamespace, "greenhouse-cluster-namespace", "n", "", "namespace for greenhouse-cluster-kubeconfig, it is the same value as Greenhouse organization")
+	syncCmd.MarkFlagRequired("greenhouse-cluster-namespace")
+	syncCmd.Flags().StringVarP(&remoteClusterKubeconfig, "remote-cluster-kubeconfig", "r", clientcmd.RecommendedHomeFile, "kubeconfig file path for remote clusters")
+	syncCmd.Flags().StringVar(&remoteClusterName, "remote-cluster-name", "", "name of the remote cluster, if not set all clusters are retrieved")
+	syncCmd.Flags().StringVar(&prefix, "prefix", "cloudctl", "prefix for kubeconfig entries. it is used to separate and manage the entries of this tool only")
 	syncCmd.Flags().BoolVar(&mergeIdenticalUsers, "merge-identical-users", true, "merge identical user information in kubeconfig file so that you only login once for the clusters that share the same auth info")
 }
 
 var (
 	syncCmd = &cobra.Command{
 		Use:   "sync",
-		Short: "Fetches remote kubeconfigs from Greenhouse cluster and merges them into your local config",
+		Short: "Fetches kubeconfigs of remote clusters from Greenhouse cluster and merges them into your local config",
 		RunE:  runSync,
 	}
 )
 
 func runSync(cmd *cobra.Command, args []string) error {
 
-	centralConfig, err := clientcmd.BuildConfigFromFlags("", greenhouseCentralClusterKubeconfig)
+	centralConfig, err := clientcmd.BuildConfigFromFlags("", greenhouseClusterKubeconfig)
 	if err != nil {
-		return fmt.Errorf("failed to build central kubeconfig: %w", err)
+		return fmt.Errorf("failed to build greenhouse kubeconfig: %w", err)
 	}
 
-	dynamicClient, err := dynamic.NewForConfig(centralConfig)
+	if greenhouseClusterContext != "" {
+		centralConfig, err = configWithContext(greenhouseClusterContext, greenhouseClusterKubeconfig)
+		if err != nil {
+			return fmt.Errorf("failed to build greenhouse kubeconfig with context %s: %w", greenhouseClusterContext, err)
+		}
+	}
+
+	// Create a scheme and register Greenhouse types.
+	scheme := runtime.NewScheme()
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		return fmt.Errorf("failed to add greenhouse scheme: %w", err)
+	}
+
+	// Create a typed client.
+	c, err := client.New(centralConfig, client.Options{Scheme: scheme})
 	if err != nil {
-		return fmt.Errorf("failed to create dynamic client: %w", err)
+		return fmt.Errorf("failed to create client: %w", err)
 	}
 
-	gvr := schema.GroupVersionResource{
-		Group:    "greenhouse.sap",
-		Version:  "v1alpha1",
-		Resource: "clusterkubeconfigs",
-	}
+	ctx := cmd.Context()
+	var clusterKubeconfigs []v1alpha1.ClusterKubeconfig
 
-	unstructuredList, err := dynamicClient.Resource(gvr).Namespace("ccloud").List(cmd.Context(), metav1.ListOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to list ClusterKubeconfigs: %w", err)
+	// If a specific remote cluster name is provided, fetch that single resource;
+	// otherwise, list all ClusterKubeconfigs in the given namespace.
+	if remoteClusterName != "" {
+		var ckc v1alpha1.ClusterKubeconfig
+		if err := c.Get(ctx, client.ObjectKey{Namespace: greenhouseClusterNamespace, Name: remoteClusterName}, &ckc); err != nil {
+			return fmt.Errorf("failed to get ClusterKubeconfig %q: %w", remoteClusterName, err)
+		}
+		clusterKubeconfigs = append(clusterKubeconfigs, ckc)
+	} else {
+		var list v1alpha1.ClusterKubeconfigList
+		if err := c.List(ctx, &list, client.InNamespace(greenhouseClusterNamespace)); err != nil {
+			return fmt.Errorf("failed to list ClusterKubeconfigs: %w", err)
+		}
+		clusterKubeconfigs = list.Items
 	}
-
-	if len(unstructuredList.Items) == 0 {
+	if len(clusterKubeconfigs) == 0 {
 		log.Println("No ClusterKubeconfigs found to sync.")
 		return nil
 	}
 
-	localConfig, err := clientcmd.LoadFromFile(greenhouseRemoteClusterKubeconfig)
+	localConfig, err := clientcmd.LoadFromFile(remoteClusterKubeconfig)
 	if err != nil {
 		return fmt.Errorf("failed to load local kubeconfig: %w", err)
 	}
@@ -83,7 +108,7 @@ func runSync(cmd *cobra.Command, args []string) error {
 		localConfig = clientcmdapi.NewConfig()
 	}
 
-	serverConfig, err := buildIncomingKubeconfig(unstructuredList.Items)
+	serverConfig, err := buildIncomingKubeconfig(clusterKubeconfigs)
 	if err != nil {
 		return fmt.Errorf("failed to create server config: %w", err)
 	}
@@ -93,52 +118,47 @@ func runSync(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to merge ClusterKubeconfig: %w", err)
 	}
 
-	err = writeConfig(localConfig, greenhouseRemoteClusterKubeconfig)
+	err = writeConfig(localConfig, remoteClusterKubeconfig)
 	if err != nil {
 		return fmt.Errorf("failed to write merged kubeconfig: %w", err)
 	}
 
-	log.Println("Successfully synced and merged the new cluster kubeconfig with your local config.")
+	log.Println("Successfully synced and merged into your local config.")
 	return nil
 }
 
-func buildIncomingKubeconfig(items []unstructured.Unstructured) (*clientcmdapi.Config, error) {
+// buildIncomingKubeconfig converts the list of typed ClusterKubeconfig objects
+// into a clientcmdapi.Config.
+func buildIncomingKubeconfig(items []v1alpha1.ClusterKubeconfig) (*clientcmdapi.Config, error) {
 	kubeconfig := clientcmdapi.NewConfig()
 
-	for _, unstructuredItem := range items {
-		var ckc v1alpha1.ClusterKubeconfig
-		err := runtime.DefaultUnstructuredConverter.FromUnstructured(unstructuredItem.Object, &ckc)
-		if err != nil {
-			return nil, fmt.Errorf("failed to convert unstructured to ClusterKubeconfig: %w", err)
-		}
-
-		// Assuming each ClusterKubeconfig has exactly one context, authInfo, and cluster
+	for _, ckc := range items {
+		// Assuming each ClusterKubeconfig has exactly one context, authInfo, and cluster.
 		if len(ckc.Spec.Kubeconfig.Contexts) > 0 {
-			ctx := ckc.Spec.Kubeconfig.Contexts[0]
-			kubeconfig.Contexts[ctx.Name] = &clientcmdapi.Context{
-				Cluster:   ctx.Context.Cluster,
-				AuthInfo:  ctx.Context.AuthInfo,
-				Namespace: ctx.Context.Namespace,
+			ctxItem := ckc.Spec.Kubeconfig.Contexts[0]
+			kubeconfig.Contexts[ctxItem.Name] = &clientcmdapi.Context{
+				Cluster:   ctxItem.Context.Cluster,
+				AuthInfo:  ctxItem.Context.AuthInfo,
+				Namespace: ctxItem.Context.Namespace,
 			}
 		}
 
 		if len(ckc.Spec.Kubeconfig.AuthInfo) > 0 {
-			auth := ckc.Spec.Kubeconfig.AuthInfo[0].AuthInfo
-			kubeconfig.AuthInfos[ckc.Spec.Kubeconfig.AuthInfo[0].Name] = &clientcmdapi.AuthInfo{
-				ClientCertificateData: auth.ClientCertificateData,
-				ClientKeyData:         auth.ClientKeyData,
-				AuthProvider:          &auth.AuthProvider,
+			authItem := ckc.Spec.Kubeconfig.AuthInfo[0]
+			kubeconfig.AuthInfos[authItem.Name] = &clientcmdapi.AuthInfo{
+				ClientCertificateData: authItem.AuthInfo.ClientCertificateData,
+				ClientKeyData:         authItem.AuthInfo.ClientKeyData,
+				AuthProvider:          &authItem.AuthInfo.AuthProvider,
 			}
 		}
 
 		if len(ckc.Spec.Kubeconfig.Clusters) > 0 {
-			cluster := ckc.Spec.Kubeconfig.Clusters[0].Cluster
-			kubeconfig.Clusters[ckc.Spec.Kubeconfig.Clusters[0].Name] = &clientcmdapi.Cluster{
-				Server:                   cluster.Server,
-				CertificateAuthorityData: cluster.CertificateAuthorityData,
+			clusterItem := ckc.Spec.Kubeconfig.Clusters[0]
+			kubeconfig.Clusters[clusterItem.Name] = &clientcmdapi.Cluster{
+				Server:                   clusterItem.Cluster.Server,
+				CertificateAuthorityData: clusterItem.Cluster.CertificateAuthorityData,
 			}
 		}
-
 	}
 
 	return kubeconfig, nil
@@ -446,4 +466,12 @@ func mergeAuthInfo(serverAuth, localAuth *clientcmdapi.AuthInfo) *clientcmdapi.A
 	// For example, ClientCertificateData and ClientKeyData are already handled
 
 	return mergedAuth
+}
+
+func configWithContext(context, kubeconfigPath string) (*rest.Config, error) {
+	return clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+		&clientcmd.ClientConfigLoadingRules{ExplicitPath: kubeconfigPath},
+		&clientcmd.ConfigOverrides{
+			CurrentContext: context,
+		}).ClientConfig()
 }
