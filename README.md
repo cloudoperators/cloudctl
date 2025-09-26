@@ -2,25 +2,40 @@
 
 # cloudctl
 
-## About this project
-
-Unified Kubernetes cli for the cloud.
+Unified Kubernetes CLI for the cloud.
 
 ```
 cloudctl is a command line interface that helps:
     
-    1) Fetch and merge kubeconfigs from central Greenhouse cluster
+    1) Fetch and merge kubeconfigs from the central Greenhouse cluster into your local kubeconfig
+    2) Sync contexts and credentials for seamless kubectl usage
+    3) Inspect the Kubernetes version of a target cluster
+    4) Print the cloudctl version and build information
+
+Examples:
+  - Merge/refresh kubeconfigs from Greenhouse:
+      cloudctl sync
+
+  - Show Kubernetes version for a specific context:
+      cloudctl cluster-version --context my-cluster
+
+  - Show cloudctl version:
+      cloudctl version
 
 Usage:
   cloudctl [command]
 
 Available Commands:
-  completion  Generate the autocompletion script for the specified shell
-  help        Help about any command
-  sync        Fetches remote kubeconfigs from Greenhouse cluster and merges them into your local config
+  cluster-version Prints the cluster version of the context in kubeconfig
+  completion      Generate the autocompletion script for the specified shell
+  help            Help about any command
+  sync            Fetches kubeconfigs of remote clusters from Greenhouse cluster and merges them into your local config
+  version         Print the cloudctl version information
 
 Flags:
   -h, --help   help for cloudctl
+
+Use "cloudctl [command] --help" for more information about a command.
 ```
 
 ## Requirements and Setup
