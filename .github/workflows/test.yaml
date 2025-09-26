@@ -1,0 +1,67 @@
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches: [ main ]
+
+jobs:
+  unit:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Show Go env
+        run: |
+          go version
+          go env
+
+      - name: Tidy modules
+        run: make tidy
+
+      - name: Run unit tests
+        run: make test
+
+  e2e:
+    name: E2E tests (k3d)
+    needs: unit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: 'v1.29.0' # any modern kubectl compatible with k3d's default
+
+      - name: Install k3d
+        run: |
+          curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
+          k3d version
+
+      - name: Build binary
+        run: make build
+
+      - name: Run E2E tests
+        env:
+          # Optional: customize e2e settings via Makefile variables if needed
+          # E2E_CLUSTER_NAME: cloudctl-e2e
+          # E2E_TAGS: e2e
+          # E2E_KUBECONFIG: ${{ github.workspace }}/e2e/e2e-kubeconfig
+          # E2E_BIN: ${{ github.workspace }}/bin/cloudctl
+          # Increase verbosity by adding GOFLAGS=-v or similar if desired
+          GOFLAGS: ""
+        run: make e2e
