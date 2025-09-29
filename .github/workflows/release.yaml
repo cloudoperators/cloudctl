@@ -60,7 +60,12 @@ jobs:
             OUT_BIN="${OUT_DIR}/${BIN_NAME}_${GOOS}_${GOARCH}"
           fi
           echo "Building ${OUT_BIN}"
-          go build -trimpath -ldflags="-s -w" -o "${OUT_BIN}" ./cmd
+          go build -trimpath -ldflags="-s -w" -o "${OUT_BIN}" .
+          # Mark executable on unix
+          if [ "${GOOS}" != "windows" ]; then
+            chmod +x "${OUT_BIN}"
+          fi
+          echo "OUT_BIN=${OUT_BIN}" >> $GITHUB_ENV
 
       - name: Package artifact
         run: |
@@ -82,22 +87,17 @@ jobs:
           fi
 
           echo "ARCHIVE_PATH=${ARCHIVE_PATH}" >> $GITHUB_ENV
-
-      - name: Create GitHub Release (if not exists)
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: ${{ github.ref_name }}
-          draft: false
-          prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-alpha') }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        continue-on-error: true
+          echo "BIN_PATH=${BIN_PATH}" >> $GITHUB_ENV
 
       - name: Upload artifact to release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          files: ${{ env.ARCHIVE_PATH }}
+          files: |
+            ${{ env.ARCHIVE_PATH }}
+            ${{ env.BIN_PATH }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-alpha') }}
+        continue-on-error: true
