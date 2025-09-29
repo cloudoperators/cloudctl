@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log"
 	"maps"
@@ -151,10 +152,24 @@ func buildIncomingKubeconfig(items []v1alpha1.ClusterKubeconfig) (*clientcmdapi.
 
 		// Add all clusters
 		for _, clusterItem := range ckc.Spec.Kubeconfig.Clusters {
+
 			kubeconfig.Clusters[clusterItem.Name] = &clientcmdapi.Cluster{
 				Server:                   clusterItem.Cluster.Server,
 				CertificateAuthorityData: clusterItem.Cluster.CertificateAuthorityData,
 			}
+
+			// Add/overwrite a "labels" named extension with the labels from the ClusterKubeconfig metadata.
+			if len(ckc.Labels) > 0 {
+				labelsJSON, err := json.Marshal(ckc.Labels)
+				if err != nil {
+					return nil, fmt.Errorf("failed to marshal labels for cluster %q: %w", clusterItem.Name, err)
+				}
+				if kubeconfig.Clusters[clusterItem.Name].Extensions == nil {
+					kubeconfig.Clusters[clusterItem.Name].Extensions = map[string]runtime.Object{}
+				}
+				kubeconfig.Clusters[clusterItem.Name].Extensions["labels"] = &runtime.Unknown{Raw: labelsJSON}
+			}
+
 		}
 	}
 
@@ -263,9 +278,10 @@ func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdap
 			// Add the managed cluster from serverConfig to localConfig
 			localConfig.Clusters[managedName] = serverCluster
 		} else {
-			// Check if Server or CertificateAuthorityData has changed
+			// Check if Server, CertificateAuthorityData or the labels extension has changed
 			if localCluster.Server != serverCluster.Server ||
-				!bytes.Equal(localCluster.CertificateAuthorityData, serverCluster.CertificateAuthorityData) {
+				!bytes.Equal(localCluster.CertificateAuthorityData, serverCluster.CertificateAuthorityData) ||
+				!labelsExtensionEqual(localCluster.Extensions, serverCluster.Extensions) {
 				localConfig.Clusters[managedName] = serverCluster
 			}
 		}
@@ -466,4 +482,40 @@ func mergeAuthInfo(serverAuth, localAuth *clientcmdapi.AuthInfo) *clientcmdapi.A
 	// For example, ClientCertificateData and ClientKeyData are already handled
 
 	return mergedAuth
+}
+
+// labelsExtensionEqual returns true if the \"labels\" named extension is equal in both maps.
+func labelsExtensionEqual(a, b map[string]runtime.Object) bool {
+	ar := extensionRaw(a, "labels")
+	br := extensionRaw(b, "labels")
+	return bytes.Equal(ar, br)
+}
+
+// extensionRaw extracts the raw JSON bytes for the given extension name, if present.
+func extensionRaw(m map[string]runtime.Object, name string) []byte {
+	if m == nil {
+		return nil
+	}
+	obj, ok := m[name]
+	if !ok || obj == nil {
+		return nil
+	}
+	switch t := obj.(type) {
+	case *runtime.Unknown:
+		return bytes.TrimSpace(t.Raw)
+	default:
+		b, err := json.Marshal(t)
+		if err != nil {
+			return nil
+		}
+		return bytes.TrimSpace(b)
+	}
+}
+
+func configWithContext(context, kubeconfigPath string) (*rest.Config, error) {
+	return clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+		&clientcmd.ClientConfigLoadingRules{ExplicitPath: kubeconfigPath},
+		&clientcmd.ConfigOverrides{
+			CurrentContext: context,
+		}).ClientConfig()
 }
