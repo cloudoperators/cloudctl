@@ -511,11 +511,3 @@ func extensionRaw(m map[string]runtime.Object, name string) []byte {
 		return bytes.TrimSpace(b)
 	}
 }
-
-func configWithContext(context, kubeconfigPath string) (*rest.Config, error) {
-	return clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
-		&clientcmd.ClientConfigLoadingRules{ExplicitPath: kubeconfigPath},
-		&clientcmd.ConfigOverrides{
-			CurrentContext: context,
-		}).ClientConfig()
-}
