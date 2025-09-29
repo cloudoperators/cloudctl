@@ -31,7 +31,6 @@ var (
 )
 
 func runClusterVersion(cmd *cobra.Command, args []string) error {
-
 	cfg, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
 	if err != nil {
 		return fmt.Errorf("failed to build kubeconfig: %w", err)
@@ -83,10 +82,6 @@ func hasAuth(cfg *rest.Config) bool {
 	if len(cfg.TLSClientConfig.CertData) > 0 || cfg.TLSClientConfig.CertFile != "" {
 		return true
 	}
-	if cfg.ExecProvider != nil {
-		return true
-	}
-
 	if cfg.ExecProvider != nil {
 		return true
 	}

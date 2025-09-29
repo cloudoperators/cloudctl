@@ -13,11 +13,10 @@ import (
 	"maps"
 	"strings"
 
-	"github.com/cloudoperators/greenhouse/pkg/apis/greenhouse/v1alpha1"
+	"github.com/cloudoperators/greenhouse/api/v1alpha1"
 	"github.com/spf13/cobra"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/rest"
-	clientcmd "k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -43,16 +42,13 @@ func init() {
 	syncCmd.Flags().BoolVar(&mergeIdenticalUsers, "merge-identical-users", true, "merge identical user information in kubeconfig file so that you only login once for the clusters that share the same auth info")
 }
 
-var (
-	syncCmd = &cobra.Command{
-		Use:   "sync",
-		Short: "Fetches kubeconfigs of remote clusters from Greenhouse cluster and merges them into your local config",
-		RunE:  runSync,
-	}
-)
+var syncCmd = &cobra.Command{
+	Use:   "sync",
+	Short: "Fetches kubeconfigs of remote clusters from Greenhouse cluster and merges them into your local config",
+	RunE:  runSync,
+}
 
 func runSync(cmd *cobra.Command, args []string) error {
-
 	centralConfig, err := clientcmd.BuildConfigFromFlags("", greenhouseClusterKubeconfig)
 	if err != nil {
 		return fmt.Errorf("failed to build greenhouse kubeconfig: %w", err)
@@ -116,7 +112,7 @@ func runSync(cmd *cobra.Command, args []string) error {
 
 	err = mergeKubeconfig(localConfig, serverConfig)
 	if err != nil {
-		return fmt.Errorf("failed to merge ClusterKubeconfig: %w", err)
+		return fmt.Errorf(`failed to merge ClusterKubeconfig: %w`, err)
 	}
 
 	err = writeConfig(localConfig, remoteClusterKubeconfig)
@@ -134,9 +130,8 @@ func buildIncomingKubeconfig(items []v1alpha1.ClusterKubeconfig) (*clientcmdapi.
 	kubeconfig := clientcmdapi.NewConfig()
 
 	for _, ckc := range items {
-		// Assuming each ClusterKubeconfig has exactly one context, authInfo, and cluster.
-		if len(ckc.Spec.Kubeconfig.Contexts) > 0 {
-			ctxItem := ckc.Spec.Kubeconfig.Contexts[0]
+		// Add all contexts
+		for _, ctxItem := range ckc.Spec.Kubeconfig.Contexts {
 			kubeconfig.Contexts[ctxItem.Name] = &clientcmdapi.Context{
 				Cluster:   ctxItem.Context.Cluster,
 				AuthInfo:  ctxItem.Context.AuthInfo,
@@ -144,17 +139,19 @@ func buildIncomingKubeconfig(items []v1alpha1.ClusterKubeconfig) (*clientcmdapi.
 			}
 		}
 
-		if len(ckc.Spec.Kubeconfig.AuthInfo) > 0 {
-			authItem := ckc.Spec.Kubeconfig.AuthInfo[0]
+		// Add all users (auth infos)
+		for _, authItem := range ckc.Spec.Kubeconfig.AuthInfo {
+			// Preserve the same data shape; exclude nothing here (merging will handle dedupe)
+			authProvider := authItem.AuthInfo.AuthProvider
 			kubeconfig.AuthInfos[authItem.Name] = &clientcmdapi.AuthInfo{
 				ClientCertificateData: authItem.AuthInfo.ClientCertificateData,
 				ClientKeyData:         authItem.AuthInfo.ClientKeyData,
-				AuthProvider:          &authItem.AuthInfo.AuthProvider,
+				AuthProvider:          &authProvider,
 			}
 		}
 
-		if len(ckc.Spec.Kubeconfig.Clusters) > 0 {
-			clusterItem := ckc.Spec.Kubeconfig.Clusters[0]
+		// Add all clusters
+		for _, clusterItem := range ckc.Spec.Kubeconfig.Clusters {
 
 			kubeconfig.Clusters[clusterItem.Name] = &clientcmdapi.Cluster{
 				Server:                   clusterItem.Cluster.Server,
@@ -273,7 +270,6 @@ func generateAuthInfoKey(authInfo *clientcmdapi.AuthInfo) string {
 }
 
 func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdapi.Config) error {
-
 	// Merge Clusters
 	for serverName, serverCluster := range serverConfig.Clusters {
 		managedName := managedNameFunc(serverName)
@@ -305,7 +301,7 @@ func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdap
 			// Generate a unique key based on AuthInfo excluding id-token and refresh-token
 			uniqueKey := generateAuthInfoKey(serverAuth)
 			hash := sha256.Sum256([]byte(uniqueKey))
-			hashString := hex.EncodeToString(hash[:])[:16] // Using first 16 chars for brevity
+			hashString := hex.EncodeToString(hash[:])[:16] // Using the first 16 chars for brevity
 			managedAuthName = fmt.Sprintf("%s:auth-%s", prefix, hashString)
 
 			// **Merge AuthInfo to preserve id-token and refresh-token**
@@ -335,7 +331,7 @@ func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdap
 
 	// Merge Contexts
 	for serverName, serverCtx := range serverConfig.Contexts {
-		managedName := serverName // it is same for context
+		managedName := serverName // it is the same for context
 
 		var managedAuthInfoName string
 		if mergeIdenticalUsers {
@@ -349,7 +345,7 @@ func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdap
 			var existsInMap bool
 			managedAuthInfoName, existsInMap = authInfoMap[uniqueKey]
 			if !existsInMap {
-				// This should not happen as all AuthInfos should have been processed
+				// This should not happen as all AuthInfos should have been processed.
 				// However, to be safe, generate a new managedAuthName
 				hash := sha256.Sum256([]byte(uniqueKey))
 				hashString := hex.EncodeToString(hash[:])[:16]
@@ -470,6 +466,10 @@ func mergeAuthInfo(serverAuth, localAuth *clientcmdapi.AuthInfo) *clientcmdapi.A
 
 	// Preserve id-token and refresh-token from localAuth
 	if localAuth.AuthProvider != nil && mergedAuth.AuthProvider != nil {
+		// Ensure the merged config map is initialized to avoid panics on assignment
+		if mergedAuth.AuthProvider.Config == nil {
+			mergedAuth.AuthProvider.Config = make(map[string]string)
+		}
 		if idToken, exists := localAuth.AuthProvider.Config["id-token"]; exists {
 			mergedAuth.AuthProvider.Config["id-token"] = idToken
 		}
@@ -478,7 +478,7 @@ func mergeAuthInfo(serverAuth, localAuth *clientcmdapi.AuthInfo) *clientcmdapi.A
 		}
 	}
 
-	// Additionally, preserve other fields if necessary
+	// Additionally, preserve other fields if necessary.
 	// For example, ClientCertificateData and ClientKeyData are already handled
 
 	return mergedAuth
@@ -510,12 +510,4 @@ func extensionRaw(m map[string]runtime.Object, name string) []byte {
 		}
 		return bytes.TrimSpace(b)
 	}
-}
-
-func configWithContext(context, kubeconfigPath string) (*rest.Config, error) {
-	return clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
-		&clientcmd.ClientConfigLoadingRules{ExplicitPath: kubeconfigPath},
-		&clientcmd.ConfigOverrides{
-			CurrentContext: context,
-		}).ClientConfig()
 }

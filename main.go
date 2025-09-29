@@ -4,8 +4,11 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/spf13/viper"
 
@@ -19,8 +22,13 @@ func main() {
 	viper.SetEnvPrefix("CLOUDCTL")
 	viper.AutomaticEnv()
 
-	if err := cmd.Execute(); err != nil {
-		fmt.Println(err)
+	// Graceful cancellation on SIGINT/SIGTERM
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	if err := cmd.Execute(ctx); err != nil {
+		// Print errors to stderr
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
