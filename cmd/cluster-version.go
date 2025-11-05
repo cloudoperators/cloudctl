@@ -31,16 +31,10 @@ var (
 )
 
 func runClusterVersion(cmd *cobra.Command, args []string) error {
-	cfg, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
-	if err != nil {
-		return fmt.Errorf("failed to build kubeconfig: %w", err)
-	}
 
-	if kubecontext != "" {
-		cfg, err = configWithContext(kubecontext, kubeconfig)
-		if err != nil {
-			return fmt.Errorf("failed to build kubeconfig with context %s: %w", kubecontext, err)
-		}
+	cfg, err := configWithContext(kubecontext, kubeconfig)
+	if err != nil {
+		return fmt.Errorf("failed to build kubeconfig with context %s: %w", kubecontext, err)
 	}
 
 	// 1) Try unauthenticated GET /version
