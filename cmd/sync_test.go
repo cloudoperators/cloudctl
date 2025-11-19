@@ -7,7 +7,10 @@ import (
 	"bytes"
 	"testing"
 
+	greenhousemetav1alpha1 "github.com/cloudoperators/greenhouse/api/meta/v1alpha1"
+	greenhousev1alpha1 "github.com/cloudoperators/greenhouse/api/v1alpha1"
 	. "github.com/onsi/gomega"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
 
@@ -144,4 +147,63 @@ func TestGenerateAuthInfoKey_CertBased(t *testing.T) {
 
 	g.Expect(ka).To(Equal(kb))
 	g.Expect(bytes.HasPrefix([]byte(ka), []byte("cert:"))).To(BeTrue(), "cert-based key should have cert: prefix")
+}
+
+func TestFilterReady_IncludesOnlyReady(t *testing.T) {
+	g := NewWithT(t)
+
+	readyCkc := greenhousev1alpha1.ClusterKubeconfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "ready-cluster"},
+		Status:     greenhousev1alpha1.ClusterKubeconfigStatus{},
+	}
+	// Set Ready=True
+	readyCkc.Status.Conditions.SetConditions(
+		greenhousemetav1alpha1.TrueCondition(
+			greenhousemetav1alpha1.ReadyCondition,
+			"TestReason",
+			"ready",
+		),
+	)
+
+	notReadyCkc := greenhousev1alpha1.ClusterKubeconfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "notready-cluster"},
+		Status:     greenhousev1alpha1.ClusterKubeconfigStatus{},
+	}
+	// Set Ready=False
+	notReadyCkc.Status.Conditions.SetConditions(
+		greenhousemetav1alpha1.FalseCondition(
+			greenhousemetav1alpha1.ReadyCondition,
+			"TestReason",
+			"not ready",
+		),
+	)
+
+	noCondCkc := greenhousev1alpha1.ClusterKubeconfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "nocond-cluster"},
+	}
+
+	out := filterReady([]greenhousev1alpha1.ClusterKubeconfig{readyCkc, notReadyCkc, noCondCkc})
+	g.Expect(out).To(HaveLen(1))
+	g.Expect(out[0].Name).To(Equal("ready-cluster"))
+}
+
+func TestFilterReady_EmptyAndNoneReady(t *testing.T) {
+	g := NewWithT(t)
+
+	// Empty input
+	out := filterReady(nil)
+	g.Expect(out).To(BeNil())
+
+	// None ready input
+	a := greenhousev1alpha1.ClusterKubeconfig{ObjectMeta: metav1.ObjectMeta{Name: "a"}}
+	a.Status.Conditions.SetConditions(
+		greenhousemetav1alpha1.FalseCondition(
+			greenhousemetav1alpha1.ReadyCondition,
+			"TestReason",
+			"not ready",
+		),
+	)
+	b := greenhousev1alpha1.ClusterKubeconfig{ObjectMeta: metav1.ObjectMeta{Name: "b"}}
+	out2 := filterReady([]greenhousev1alpha1.ClusterKubeconfig{a, b})
+	g.Expect(out2).To(HaveLen(0))
 }

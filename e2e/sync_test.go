@@ -32,7 +32,8 @@ func TestE2E_Sync(t *testing.T) {
 	crFile := filepath.Join(os.TempDir(), "clusterkubeconfig-e2e.yaml")
 
 	// Prefer applying the CRD from the repository path that matches the provided spec (greenhouse.sap group).
-	remoteCRD := "https://raw.githubusercontent.com/cloudoperators/greenhouse/refs/heads/main/charts/manager/crds/greenhouse.sap_clusterkubeconfigs.yaml"
+	// Use the correct raw URL format: /{owner}/{repo}/{branch}/{path}
+	remoteCRD := "https://raw.githubusercontent.com/cloudoperators/greenhouse/main/charts/manager/crds/greenhouse.sap_clusterkubeconfigs.yaml"
 
 	// Try local cache first (optional), otherwise fall back to the remote CRD above.
 	appliedCRD := false
@@ -101,6 +102,20 @@ spec:
 	// Apply CR
 	if _, stderr, err := runCmd("kubectl", "--kubeconfig", kubeconfig, "apply", "-f", crFile); err != nil {
 		t.Fatalf("apply CR failed: %v (stderr: %s)", err, stderr)
+	}
+
+	// Since cloudctl sync only considers ClusterKubeconfigs with Ready=True,
+	// patch the status of our demo resource accordingly and wait until it's reflected.
+	// Note: We don't have a controller in this e2e setup, so we set the status manually.
+	if _, stderr, err := runCmd(
+		"kubectl", "--kubeconfig", kubeconfig,
+		"-n", ns,
+		"patch", "clusterkubeconfig", "demo",
+		"--type", "merge",
+		"--subresource", "status",
+		"-p", `{"status":{"conditions":[{"type":"Ready","status":"True","reason":"E2E","message":"ready"}]}}`,
+	); err != nil {
+		t.Fatalf("patch status failed: %v (stderr: %s)", err, stderr)
 	}
 
 	// Target kubeconfig file

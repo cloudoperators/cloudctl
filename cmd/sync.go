@@ -13,6 +13,7 @@ import (
 	"maps"
 	"strings"
 
+	greenhousemetav1alpha1 "github.com/cloudoperators/greenhouse/api/meta/v1alpha1"
 	"github.com/cloudoperators/greenhouse/api/v1alpha1"
 	"github.com/spf13/cobra"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -91,6 +92,9 @@ func runSync(cmd *cobra.Command, args []string) error {
 		}
 		clusterKubeconfigs = list.Items
 	}
+	// Filter only Ready ClusterKubeconfigs
+	clusterKubeconfigs = filterReady(clusterKubeconfigs)
+
 	if len(clusterKubeconfigs) == 0 {
 		log.Println("No ClusterKubeconfigs found to sync.")
 		return nil
@@ -122,6 +126,21 @@ func runSync(cmd *cobra.Command, args []string) error {
 
 	log.Println("Successfully synced and merged into your local config.")
 	return nil
+}
+
+// filterReady returns only ClusterKubeconfigs that have Ready condition set to True.
+func filterReady(items []v1alpha1.ClusterKubeconfig) []v1alpha1.ClusterKubeconfig {
+	if len(items) == 0 {
+		return items
+	}
+	eligible := make([]v1alpha1.ClusterKubeconfig, 0, len(items))
+	for _, ckc := range items {
+		cond := ckc.Status.Conditions.GetConditionByType(greenhousemetav1alpha1.ReadyCondition)
+		if cond == nil || cond.IsTrue() {
+			eligible = append(eligible, ckc)
+		}
+	}
+	return eligible
 }
 
 // buildIncomingKubeconfig converts the list of typed ClusterKubeconfig objects
