@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log"
 	"maps"
+	"sort"
 	"strings"
 
 	greenhousemetav1alpha1 "github.com/cloudoperators/greenhouse/api/meta/v1alpha1"
@@ -30,6 +31,9 @@ var (
 	remoteClusterName           string
 	prefix                      string
 	mergeIdenticalUsers         bool
+	authType                    string
+	kubeloginPath               string
+	kubeloginExtraArgs          []string
 )
 
 func init() {
@@ -41,6 +45,11 @@ func init() {
 	syncCmd.Flags().StringVar(&remoteClusterName, "remote-cluster-name", "", "name of the remote cluster, if not set all clusters are retrieved")
 	syncCmd.Flags().StringVar(&prefix, "prefix", "cloudctl", "prefix for kubeconfig entries. it is used to separate and manage the entries of this tool only")
 	syncCmd.Flags().BoolVar(&mergeIdenticalUsers, "merge-identical-users", true, "merge identical user information in kubeconfig file so that you only login once for the clusters that share the same auth info")
+
+	// Authentication output style flags
+	syncCmd.Flags().StringVar(&authType, "auth-type", "auth-provider", "authentication config style to write for users: auth-provider or exec-plugin")
+	syncCmd.Flags().StringVar(&kubeloginPath, "kubelogin-path", "kubelogin", "path to kubelogin command when using exec-plugin auth-type")
+	syncCmd.Flags().StringSliceVar(&kubeloginExtraArgs, "kubelogin-extra-args", nil, "extra arguments to pass to kubelogin exec plugin")
 }
 
 var syncCmd = &cobra.Command{
@@ -136,7 +145,7 @@ func filterReady(items []v1alpha1.ClusterKubeconfig) []v1alpha1.ClusterKubeconfi
 	eligible := make([]v1alpha1.ClusterKubeconfig, 0, len(items))
 	for _, ckc := range items {
 		cond := ckc.Status.Conditions.GetConditionByType(greenhousemetav1alpha1.ReadyCondition)
-		if cond == nil || cond.IsTrue() {
+		if cond != nil && cond.IsTrue() {
 			eligible = append(eligible, ckc)
 		}
 	}
@@ -160,12 +169,26 @@ func buildIncomingKubeconfig(items []v1alpha1.ClusterKubeconfig) (*clientcmdapi.
 
 		// Add all users (auth infos)
 		for _, authItem := range ckc.Spec.Kubeconfig.AuthInfo {
-			// Preserve the same data shape; exclude nothing here (merging will handle dedupe)
-			authProvider := authItem.AuthInfo.AuthProvider
-			kubeconfig.AuthInfos[authItem.Name] = &clientcmdapi.AuthInfo{
-				ClientCertificateData: authItem.AuthInfo.ClientCertificateData,
-				ClientKeyData:         authItem.AuthInfo.ClientKeyData,
-				AuthProvider:          &authProvider,
+			// Depending on the selected auth type, keep legacy auth-provider or convert to exec plugin
+			if strings.EqualFold(authType, "exec-plugin") && authItem.AuthInfo.AuthProvider.Name == "oidc" {
+				execAuth := &clientcmdapi.AuthInfo{
+					ClientCertificateData: authItem.AuthInfo.ClientCertificateData,
+					ClientKeyData:         authItem.AuthInfo.ClientKeyData,
+					Exec: &clientcmdapi.ExecConfig{
+						APIVersion:      "client.authentication.k8s.io/v1",
+						Command:         kubeloginPath,
+						Args:            buildKubeloginArgs(authItem.AuthInfo.AuthProvider.Config, kubeloginExtraArgs),
+						InteractiveMode: clientcmdapi.IfAvailableExecInteractiveMode,
+					},
+				}
+				kubeconfig.AuthInfos[authItem.Name] = execAuth
+			} else {
+				// Preserve the same data shape; exclude nothing here (merging will handle dedupe)
+				kubeconfig.AuthInfos[authItem.Name] = &clientcmdapi.AuthInfo{
+					ClientCertificateData: authItem.AuthInfo.ClientCertificateData,
+					ClientKeyData:         authItem.AuthInfo.ClientKeyData,
+					AuthProvider:          &authItem.AuthInfo.AuthProvider,
+				}
 			}
 		}
 
@@ -230,8 +253,27 @@ func authInfoEqual(a, b *clientcmdapi.AuthInfo) bool {
 		return false
 	}
 
+	// Compare Exec first (new style)
+	if (a.Exec == nil) != (b.Exec == nil) {
+		return false
+	}
+	if a.Exec != nil && b.Exec != nil {
+		if a.Exec.Command != b.Exec.Command || a.Exec.APIVersion != b.Exec.APIVersion {
+			return false
+		}
+		if len(a.Exec.Args) != len(b.Exec.Args) {
+			return false
+		}
+		for i := range a.Exec.Args {
+			if a.Exec.Args[i] != b.Exec.Args[i] {
+				return false
+			}
+		}
+		return true
+	}
+
 	// Compare AuthProvider, excluding "id-token" and "refresh-token"
-	if a.AuthProvider == nil && b.AuthProvider != nil || a.AuthProvider != nil && b.AuthProvider == nil {
+	if (a.AuthProvider == nil) != (b.AuthProvider == nil) {
 		return false
 	}
 	if a.AuthProvider != nil && b.AuthProvider != nil {
@@ -266,6 +308,30 @@ func filterAuthProviderConfig(config map[string]string) map[string]string {
 // excluding "id-token" and "refresh-token". It uses "client-id", "client-secret",
 // "auth-request-extra-params", and "extra-scopes" to generate the key.
 func generateAuthInfoKey(authInfo *clientcmdapi.AuthInfo) string {
+	// Exec-based key: derive from stable subset of args to avoid including tokens
+	if authInfo.Exec != nil {
+		// Extract known kubelogin flags
+		var issuer, clientID, clientSecret, extraParams string
+		var scopes []string
+		for _, arg := range authInfo.Exec.Args {
+			switch {
+			case strings.HasPrefix(arg, "--oidc-issuer-url="):
+				issuer = strings.TrimPrefix(arg, "--oidc-issuer-url=")
+			case strings.HasPrefix(arg, "--oidc-client-id="):
+				clientID = strings.TrimPrefix(arg, "--oidc-client-id=")
+			case strings.HasPrefix(arg, "--oidc-client-secret="):
+				clientSecret = strings.TrimPrefix(arg, "--oidc-client-secret=")
+			case strings.HasPrefix(arg, "--oidc-extra-scope="):
+				scopes = append(scopes, strings.TrimPrefix(arg, "--oidc-extra-scope="))
+			case strings.HasPrefix(arg, "--oidc-auth-request-extra-params="):
+				extraParams = strings.TrimPrefix(arg, "--oidc-auth-request-extra-params=")
+			}
+		}
+		sort.Strings(scopes)
+		data := fmt.Sprintf("exec:issuer:%s;client-id:%s;client-secret:%s;extra-params:%s;scopes:%s", issuer, clientID, clientSecret, extraParams, strings.Join(scopes, ","))
+		return data
+	}
+
 	if authInfo.AuthProvider == nil {
 		// For AuthInfos without AuthProvider, use a different unique identifier
 		// Here, we'll use the hash of ClientCertificateData and ClientKeyData
@@ -286,6 +352,36 @@ func generateAuthInfoKey(authInfo *clientcmdapi.AuthInfo) string {
 		clientID, clientSecret, authRequestExtraParams, extraScopes)
 
 	return data
+}
+
+// buildKubeloginArgs constructs kubelogin arguments from an oidc auth-provider config and extra args
+func buildKubeloginArgs(cfg map[string]string, extra []string) []string {
+	args := []string{"get-token"}
+	if v := cfg["idp-issuer-url"]; v != "" {
+		args = append(args, "--oidc-issuer-url="+v)
+	}
+	if v := cfg["client-id"]; v != "" {
+		args = append(args, "--oidc-client-id="+v)
+	}
+	if v := cfg["client-secret"]; v != "" {
+		args = append(args, "--oidc-client-secret="+v)
+	}
+	if v := cfg["extra-scopes"]; v != "" {
+		for _, s := range strings.Split(v, ",") {
+			s = strings.TrimSpace(s)
+			if s != "" {
+				args = append(args, "--oidc-extra-scope="+s)
+			}
+		}
+	}
+	if v := cfg["auth-request-extra-params"]; v != "" {
+		args = append(args, "--oidc-auth-request-extra-params="+v)
+	}
+	// allow caller to inject additional flags
+	if len(extra) > 0 {
+		args = append(args, extra...)
+	}
+	return args
 }
 
 func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdapi.Config) error {

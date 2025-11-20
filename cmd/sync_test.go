@@ -207,3 +207,111 @@ func TestFilterReady_EmptyAndNoneReady(t *testing.T) {
 	out2 := filterReady([]greenhousev1alpha1.ClusterKubeconfig{a, b})
 	g.Expect(out2).To(HaveLen(0))
 }
+
+// ---- New tests for exec-plugin flags and helpers ----
+
+func TestSyncFlags_AuthTypeAndKubeloginDefaults(t *testing.T) {
+	g := NewWithT(t)
+
+	// Ensure flags are registered on syncCmd with correct defaults
+	fAuthType := syncCmd.Flags().Lookup("auth-type")
+	g.Expect(fAuthType).ToNot(BeNil())
+	g.Expect(fAuthType.DefValue).To(Equal("auth-provider"))
+
+	fPath := syncCmd.Flags().Lookup("kubelogin-path")
+	g.Expect(fPath).ToNot(BeNil())
+	g.Expect(fPath.DefValue).To(Equal("kubelogin"))
+
+	fExtra := syncCmd.Flags().Lookup("kubelogin-extra-args")
+	g.Expect(fExtra).ToNot(BeNil())
+	// StringSliceVar defaults to [] if nil; DefValue is representation of default (empty)
+	g.Expect(fExtra.DefValue).To(Or(Equal("[]"), Equal("")))
+}
+
+func TestBuildKubeloginArgs_MappingAndExtras(t *testing.T) {
+	g := NewWithT(t)
+
+	cfg := map[string]string{
+		"idp-issuer-url":            "https://issuer.example.com",
+		"client-id":                 "cid",
+		"client-secret":             "csec",
+		"extra-scopes":              "groups, offline_access ,email",
+		"auth-request-extra-params": "aud=foo,foo=bar",
+	}
+	extra := []string{"--v=4", "--token-cache-dir=/tmp/k"}
+
+	args := buildKubeloginArgs(cfg, extra)
+
+	// Starts with subcommand
+	g.Expect(args[0]).To(Equal("get-token"))
+	// Contains mapped flags
+	g.Expect(args).To(ContainElement("--oidc-issuer-url=https://issuer.example.com"))
+	g.Expect(args).To(ContainElement("--oidc-client-id=cid"))
+	g.Expect(args).To(ContainElement("--oidc-client-secret=csec"))
+	// Each scope becomes separate flag; whitespace trimmed
+	g.Expect(args).To(ContainElements(
+		"--oidc-extra-scope=groups",
+		"--oidc-extra-scope=offline_access",
+		"--oidc-extra-scope=email",
+	))
+	// Extra params
+	g.Expect(args).To(ContainElement("--oidc-auth-request-extra-params=aud=foo,foo=bar"))
+	// Extra args appended
+	g.Expect(args[len(args)-2:]).To(Equal(extra))
+}
+
+func TestAuthInfoEqual_ExecBased(t *testing.T) {
+	g := NewWithT(t)
+
+	baseArgs := []string{"get-token", "--oidc-issuer-url=x", "--oidc-client-id=a"}
+	a := &clientcmdapi.AuthInfo{Exec: &clientcmdapi.ExecConfig{APIVersion: "client.authentication.k8s.io/v1", Command: "kubelogin", Args: append([]string{}, baseArgs...)}}
+	b := &clientcmdapi.AuthInfo{Exec: &clientcmdapi.ExecConfig{APIVersion: "client.authentication.k8s.io/v1", Command: "kubelogin", Args: append([]string{}, baseArgs...)}}
+	g.Expect(authInfoEqual(a, b)).To(BeTrue())
+
+	// Change an arg should make them different
+	b.Exec.Args[2] = "--oidc-client-id=DIFF"
+	g.Expect(authInfoEqual(a, b)).To(BeFalse())
+
+	// Change command should make them different
+	b = b.DeepCopy()
+	b.Exec.Command = "other"
+	g.Expect(authInfoEqual(a, b)).To(BeFalse())
+}
+
+func TestGenerateAuthInfoKey_ExecStableIgnoresOrder(t *testing.T) {
+	g := NewWithT(t)
+
+	// Same effective parameters but different order of scope flags
+	a := &clientcmdapi.AuthInfo{Exec: &clientcmdapi.ExecConfig{
+		APIVersion: "client.authentication.k8s.io/v1",
+		Command:    "kubelogin",
+		Args: []string{
+			"get-token",
+			"--oidc-issuer-url=https://issuer",
+			"--oidc-client-id=cid",
+			"--oidc-client-secret=csec",
+			"--oidc-auth-request-extra-params=aud=foo",
+			"--oidc-extra-scope=email",
+			"--oidc-extra-scope=groups",
+		},
+	}}
+
+	b := &clientcmdapi.AuthInfo{Exec: &clientcmdapi.ExecConfig{
+		APIVersion: "client.authentication.k8s.io/v1",
+		Command:    "kubelogin",
+		Args: []string{
+			"get-token",
+			"--oidc-extra-scope=groups",
+			"--oidc-issuer-url=https://issuer",
+			"--oidc-client-id=cid",
+			"--oidc-client-secret=csec",
+			"--oidc-extra-scope=email",
+			"--oidc-auth-request-extra-params=aud=foo",
+			"--v=4", // unrelated extra should not affect extracted key fields
+		},
+	}}
+
+	ka := generateAuthInfoKey(a)
+	kb := generateAuthInfoKey(b)
+	g.Expect(ka).To(Equal(kb))
+}

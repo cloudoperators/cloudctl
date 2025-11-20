@@ -89,6 +89,12 @@ spec:
         cluster: rc
         user: user
         namespace: default
+status:
+  statusConditions:
+    conditions:
+    - reason: Complete
+      status: "True"
+      type: Ready
 `
 	writeFile(t, crFile, crYAML)
 
@@ -104,20 +110,21 @@ spec:
 		t.Fatalf("apply CR failed: %v (stderr: %s)", err, stderr)
 	}
 
-	// Since cloudctl sync only considers ClusterKubeconfigs with Ready=True,
-	// patch the status of our demo resource accordingly and wait until it's reflected.
-	// Note: We don't have a controller in this e2e setup, so we set the status manually.
+	// Explicitly patch status to Ready=True via the status subresource so the sync can filter by readiness
+	// This mirrors what a controller would normally set, but keeps the e2e test self-contained.
+	// Note: status.statusConditions is an object with a nested 'conditions' list in this CRD and requires lastTransitionTime.
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	patch := fmt.Sprintf(`{"status":{"statusConditions":{"conditions":[{"type":"Ready","status":"True","reason":"E2E","message":"ready","lastTransitionTime":"%s"}]}}}`, now)
 	if _, stderr, err := runCmd(
 		"kubectl", "--kubeconfig", kubeconfig,
 		"-n", ns,
 		"patch", "clusterkubeconfig", "demo",
 		"--type", "merge",
 		"--subresource", "status",
-		"-p", `{"status":{"conditions":[{"type":"Ready","status":"True","reason":"E2E","message":"ready"}]}}`,
+		"-p", patch,
 	); err != nil {
 		t.Fatalf("patch status failed: %v (stderr: %s)", err, stderr)
 	}
-
 	// Target kubeconfig file
 	targetKubeconfig := filepath.Join(os.TempDir(), "e2e-sync-target-kubeconfig")
 	createEmptyKubeconfigFile(t, targetKubeconfig)
