@@ -43,7 +43,7 @@ jobs:
           go-version: '1.25'
 
       - name: Install kubectl
-        uses: azure/setup-kubectl@v4
+        uses: azure/setup-kubectl@776406bce94f63e41d621b960d78ee25c8b76ede # v4
         with:
           version: 'v1.29.0' # any modern kubectl compatible with k3d's default
 
