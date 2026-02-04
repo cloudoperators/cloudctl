@@ -9,95 +9,26 @@ permissions:
   contents: write
 
 jobs:
-  build-and-release:
-    name: Build and attach binaries
+  goreleaser:
     runs-on: ubuntu-latest
-
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - goos: linux
-            goarch: amd64
-          - goos: linux
-            goarch: arm64
-          - goos: darwin
-            goarch: amd64
-          - goos: darwin
-            goarch: arm64
-          - goos: windows
-            goarch: amd64
-          - goos: windows
-            goarch: arm64
-
     steps:
-      - name: Check out repository
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Go
-        uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6
+        uses: actions/setup-go@v5
         with:
-          go-version: "1.25.x"
+          go-version: "1.25"
 
-      - name: Verify build
-        run: |
-          go version
-          go mod download
-          go build ./...
-
-      - name: Build binary
-        env:
-          CGO_ENABLED: "0"
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-        run: |
-          BIN_NAME=cloudctl
-          OUT_DIR=dist
-          mkdir -p "${OUT_DIR}"
-          if [ "${GOOS}" = "windows" ]; then
-            OUT_BIN="${OUT_DIR}/${BIN_NAME}_${GOOS}_${GOARCH}.exe"
-          else
-            OUT_BIN="${OUT_DIR}/${BIN_NAME}_${GOOS}_${GOARCH}"
-          fi
-          echo "Building ${OUT_BIN}"
-          go build -trimpath -ldflags="-s -w" -o "${OUT_BIN}" .
-          # Mark executable on unix
-          if [ "${GOOS}" != "windows" ]; then
-            chmod +x "${OUT_BIN}"
-          fi
-          echo "OUT_BIN=${OUT_BIN}" >> $GITHUB_ENV
-
-      - name: Package artifact
-        run: |
-          set -euo pipefail
-          BIN_NAME=cloudctl
-          OUT_DIR=dist
-          ARCHIVE_DIR=pkg
-          mkdir -p "${ARCHIVE_DIR}"
-
-          FILE_BASE="${BIN_NAME}_${{ matrix.goos }}_${{ matrix.goarch }}"
-          if [ "${{ matrix.goos }}" = "windows" ]; then
-            BIN_PATH="${OUT_DIR}/${FILE_BASE}.exe"
-            ARCHIVE_PATH="${ARCHIVE_DIR}/${FILE_BASE}.zip"
-            (cd "${OUT_DIR}" && zip -9 "../${ARCHIVE_PATH}" "${FILE_BASE}.exe")
-          else
-            BIN_PATH="${OUT_DIR}/${FILE_BASE}"
-            ARCHIVE_PATH="${ARCHIVE_DIR}/${FILE_BASE}.tar.gz"
-            (cd "${OUT_DIR}" && tar -czf "../${ARCHIVE_PATH}" "${FILE_BASE}")
-          fi
-
-          echo "ARCHIVE_PATH=${ARCHIVE_PATH}" >> $GITHUB_ENV
-          echo "BIN_PATH=${BIN_PATH}" >> $GITHUB_ENV
-
-      - name: Upload artifact to release
-        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
         with:
-          tag_name: ${{ github.ref_name }}
-          files: |
-            ${{ env.ARCHIVE_PATH }}
-            ${{ env.BIN_PATH }}
+          # either 'goreleaser' (default) or 'goreleaser-pro'
+          distribution: goreleaser
+          # 'latest', 'v1.4.4' or a SemVer constraint
+          version: "~> v2"
+          args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          draft: false
-          prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-alpha') }}
-        continue-on-error: true
