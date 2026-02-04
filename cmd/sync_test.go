@@ -226,6 +226,10 @@ func TestSyncFlags_AuthTypeAndKubeloginDefaults(t *testing.T) {
 	g.Expect(fExtra).ToNot(BeNil())
 	// StringSliceVar defaults to [] if nil; DefValue is representation of default (empty)
 	g.Expect(fExtra.DefValue).To(Or(Equal("[]"), Equal("")))
+
+	fCache := syncCmd.Flags().Lookup("kubelogin-token-cache-dir")
+	g.Expect(fCache).ToNot(BeNil())
+	g.Expect(fCache.DefValue).To(Equal("$(HOME)/.kube/cache/oidc-login"))
 }
 
 func TestBuildKubeloginArgs_MappingAndExtras(t *testing.T) {
@@ -240,7 +244,7 @@ func TestBuildKubeloginArgs_MappingAndExtras(t *testing.T) {
 	}
 	extra := []string{"--v=4", "--token-cache-dir=/tmp/k"}
 
-	args := buildKubeloginArgs(cfg, extra)
+	args := buildKubeloginArgs(cfg, extra, "$(HOME)/.kube/cache/oidc-login")
 
 	// Starts with subcommand
 	g.Expect(args[0]).To(Equal("get-token"))
@@ -258,6 +262,37 @@ func TestBuildKubeloginArgs_MappingAndExtras(t *testing.T) {
 	g.Expect(args).To(ContainElement("--oidc-auth-request-extra-params=aud=foo,foo=bar"))
 	// Extra args appended
 	g.Expect(args[len(args)-2:]).To(Equal(extra))
+}
+
+func TestBuildKubeloginArgs_ConnectorID(t *testing.T) {
+	g := NewWithT(t)
+
+	cfg := map[string]string{
+		"idp-issuer-url":            "https://issuer.example.com",
+		"client-id":                 "cid",
+		"auth-request-extra-params": "connector_id=my-id",
+	}
+
+	args := buildKubeloginArgs(cfg, nil, "$(HOME)/.kube/cache/oidc-login")
+
+	g.Expect(args).To(ContainElement("--oidc-auth-request-extra-params=connector_id=my-id"))
+	g.Expect(args).To(ContainElement(HavePrefix("--token-cache-dir=")))
+	g.Expect(args).To(ContainElement(ContainSubstring("my-id")))
+}
+
+func TestBuildKubeloginArgs_ConnectorIDInMultiParams(t *testing.T) {
+	g := NewWithT(t)
+
+	cfg := map[string]string{
+		"idp-issuer-url":            "https://issuer.example.com",
+		"client-id":                 "cid",
+		"auth-request-extra-params": "foo=bar,connector_id=another-id,baz=qux",
+	}
+
+	args := buildKubeloginArgs(cfg, nil, "/custom/cache")
+
+	g.Expect(args).To(ContainElement("--oidc-auth-request-extra-params=foo=bar,connector_id=another-id,baz=qux"))
+	g.Expect(args).To(ContainElement("--token-cache-dir=/custom/cache/another-id"))
 }
 
 func TestAuthInfoEqual_ExecBased(t *testing.T) {
