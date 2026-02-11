@@ -42,7 +42,7 @@ func runClusterVersion(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		// 2) Fallback to authenticated
 		if !hasAuth(cfg) {
-			return fmt.Errorf("no authentication methods found in your kubeconfig. please authenticate (`kubelogin`, etc.) and try again.")
+			return fmt.Errorf("no authentication methods found in your kubeconfig. please authenticate (`kubelogin`, etc.) and try again")
 		}
 
 		clientset, cerr := kubernetes.NewForConfig(cfg)
@@ -73,7 +73,7 @@ func hasAuth(cfg *rest.Config) bool {
 	if cfg.Username != "" && cfg.Password != "" {
 		return true
 	}
-	if len(cfg.TLSClientConfig.CertData) > 0 || cfg.TLSClientConfig.CertFile != "" {
+	if len(cfg.CertData) > 0 || cfg.CertFile != "" {
 		return true
 	}
 	if cfg.ExecProvider != nil {
@@ -94,19 +94,19 @@ func getUnauthenticatedVersion(cfg *rest.Config) (*version.Info, error) {
 
 	// build TLS config
 	tlsCfg := &tls.Config{}
-	if cfg.TLSClientConfig.Insecure {
+	if cfg.Insecure {
 		tlsCfg.InsecureSkipVerify = true
 	}
 
 	// trust the same CA if provided
-	if len(cfg.TLSClientConfig.CAData) > 0 {
+	if len(cfg.CAData) > 0 {
 		pool := x509.NewCertPool()
-		if ok := pool.AppendCertsFromPEM(cfg.TLSClientConfig.CAData); !ok {
+		if ok := pool.AppendCertsFromPEM(cfg.CAData); !ok {
 			return nil, fmt.Errorf("failed to append CA data")
 		}
 		tlsCfg.RootCAs = pool
-	} else if cfg.TLSClientConfig.CAFile != "" {
-		pem, err := os.ReadFile(cfg.TLSClientConfig.CAFile)
+	} else if cfg.CAFile != "" {
+		pem, err := os.ReadFile(cfg.CAFile)
 		if err != nil {
 			return nil, err
 		}
@@ -122,7 +122,7 @@ func getUnauthenticatedVersion(cfg *rest.Config) (*version.Info, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("unexpected HTTP status: %s", resp.Status)

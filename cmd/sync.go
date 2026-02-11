@@ -34,13 +34,16 @@ var (
 	authType                    string
 	kubeloginPath               string
 	kubeloginExtraArgs          []string
+	kubeloginTokenCacheDir      string
 )
 
 func init() {
 	syncCmd.Flags().StringVarP(&greenhouseClusterKubeconfig, "greenhouse-cluster-kubeconfig", "k", clientcmd.RecommendedHomeFile, "kubeconfig file path for Greenhouse cluster")
 	syncCmd.Flags().StringVarP(&greenhouseClusterContext, "greenhouse-cluster-context", "c", "", "context in greenhouse-cluster-kubeconfig, the context in the file is used if this flag is not set")
 	syncCmd.Flags().StringVarP(&greenhouseClusterNamespace, "greenhouse-cluster-namespace", "n", "", "namespace for greenhouse-cluster-kubeconfig, it is the same value as Greenhouse organization")
-	syncCmd.MarkFlagRequired("greenhouse-cluster-namespace")
+	if err := syncCmd.MarkFlagRequired("greenhouse-cluster-namespace"); err != nil {
+		panic(err)
+	}
 	syncCmd.Flags().StringVarP(&remoteClusterKubeconfig, "remote-cluster-kubeconfig", "r", clientcmd.RecommendedHomeFile, "kubeconfig file path for remote clusters")
 	syncCmd.Flags().StringVar(&remoteClusterName, "remote-cluster-name", "", "name of the remote cluster, if not set all clusters are retrieved")
 	syncCmd.Flags().StringVar(&prefix, "prefix", "cloudctl", "prefix for kubeconfig entries. it is used to separate and manage the entries of this tool only")
@@ -50,6 +53,7 @@ func init() {
 	syncCmd.Flags().StringVar(&authType, "auth-type", "auth-provider", "authentication config style to write for users: auth-provider or exec-plugin")
 	syncCmd.Flags().StringVar(&kubeloginPath, "kubelogin-path", "kubelogin", "path to kubelogin command when using exec-plugin auth-type")
 	syncCmd.Flags().StringSliceVar(&kubeloginExtraArgs, "kubelogin-extra-args", nil, "extra arguments to pass to kubelogin exec plugin")
+	syncCmd.Flags().StringVar(&kubeloginTokenCacheDir, "kubelogin-token-cache-dir", "$(HOME)/.kube/cache/oidc-login", "token cache directory for kubelogin")
 }
 
 var syncCmd = &cobra.Command{
@@ -177,7 +181,7 @@ func buildIncomingKubeconfig(items []v1alpha1.ClusterKubeconfig) (*clientcmdapi.
 					Exec: &clientcmdapi.ExecConfig{
 						APIVersion:      "client.authentication.k8s.io/v1",
 						Command:         kubeloginPath,
-						Args:            buildKubeloginArgs(authItem.AuthInfo.AuthProvider.Config, kubeloginExtraArgs),
+						Args:            buildKubeloginArgs(authItem.AuthInfo.AuthProvider.Config, kubeloginExtraArgs, kubeloginTokenCacheDir),
 						InteractiveMode: clientcmdapi.IfAvailableExecInteractiveMode,
 					},
 				}
@@ -355,7 +359,7 @@ func generateAuthInfoKey(authInfo *clientcmdapi.AuthInfo) string {
 }
 
 // buildKubeloginArgs constructs kubelogin arguments from an oidc auth-provider config and extra args
-func buildKubeloginArgs(cfg map[string]string, extra []string) []string {
+func buildKubeloginArgs(cfg map[string]string, extra []string, tokenCacheDir string) []string {
 	args := []string{"get-token"}
 	if v := cfg["idp-issuer-url"]; v != "" {
 		args = append(args, "--oidc-issuer-url="+v)
@@ -376,6 +380,19 @@ func buildKubeloginArgs(cfg map[string]string, extra []string) []string {
 	}
 	if v := cfg["auth-request-extra-params"]; v != "" {
 		args = append(args, "--oidc-auth-request-extra-params="+v)
+		// If connector_id is used, use a separate token cache directory to avoid collisions
+		// between multiple users on the same machine.
+		// See https://github.com/int128/kubelogin/issues/29
+		for _, param := range strings.Split(v, ",") {
+			kv := strings.SplitN(param, "=", 2)
+			if len(kv) == 2 && strings.TrimSpace(kv[0]) == "connector_id" {
+				connectorID := strings.TrimSpace(kv[1])
+				if connectorID != "" {
+					args = append(args, fmt.Sprintf("--token-cache-dir=%s/%s", tokenCacheDir, connectorID))
+				}
+				break
+			}
+		}
 	}
 	// allow caller to inject additional flags
 	if len(extra) > 0 {
