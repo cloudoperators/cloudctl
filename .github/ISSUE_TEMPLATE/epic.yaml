@@ -1,6 +1,6 @@
 name: ✨ Epic
 description: Create an epic
-title: "[EPIC] - <title>"
+title: "[EPIC cloudctl] - <title>"
 body:
   - type: textarea
     id: description
