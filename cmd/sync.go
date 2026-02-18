@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log"
 	"maps"
+	"os"
 	"sort"
 	"strings"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/cloudoperators/greenhouse/api/v1alpha1"
 	"github.com/spf13/cobra"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -63,15 +65,27 @@ var syncCmd = &cobra.Command{
 }
 
 func runSync(cmd *cobra.Command, args []string) error {
-	centralConfig, err := clientcmd.BuildConfigFromFlags("", greenhouseClusterKubeconfig)
-	if err != nil {
-		return fmt.Errorf("failed to build greenhouse kubeconfig: %w", err)
+	if greenhouseClusterKubeconfig == "" {
+		return fmt.Errorf("greenhouse cluster kubeconfig path is empty")
 	}
 
+	if _, err := os.Stat(greenhouseClusterKubeconfig); err != nil {
+		return fmt.Errorf("greenhouse cluster kubeconfig file not found at %q: %w", greenhouseClusterKubeconfig, err)
+	}
+
+	var (
+		centralConfig *rest.Config
+		err           error
+	)
 	if greenhouseClusterContext != "" {
 		centralConfig, err = configWithContext(greenhouseClusterContext, greenhouseClusterKubeconfig)
 		if err != nil {
-			return fmt.Errorf("failed to build greenhouse kubeconfig with context %s: %w", greenhouseClusterContext, err)
+			return fmt.Errorf("failed to build greenhouse kubeconfig with context %q from %q: %w", greenhouseClusterContext, greenhouseClusterKubeconfig, err)
+		}
+	} else {
+		centralConfig, err = clientcmd.BuildConfigFromFlags("", greenhouseClusterKubeconfig)
+		if err != nil {
+			return fmt.Errorf("failed to build greenhouse kubeconfig from %q: %w", greenhouseClusterKubeconfig, err)
 		}
 	}
 
