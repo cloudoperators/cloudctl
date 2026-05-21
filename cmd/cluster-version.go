@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 	"k8s.io/apimachinery/pkg/version"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -31,6 +32,9 @@ var (
 )
 
 func runClusterVersion(cmd *cobra.Command, args []string) error {
+	// Use viper as a source of configuration
+	kubeconfig = viper.GetString("kubeconfig")
+	kubecontext = viper.GetString("context")
 
 	cfg, err := configWithContext(kubecontext, kubeconfig)
 	if err != nil {
@@ -138,4 +142,9 @@ func getUnauthenticatedVersion(cfg *rest.Config) (*version.Info, error) {
 func init() {
 	clusterVersionCmd.Flags().StringVarP(&kubeconfig, "kubeconfig", "k", clientcmd.RecommendedHomeFile, "kubeconfig file path")
 	clusterVersionCmd.Flags().StringVarP(&kubecontext, "context", "c", "", "cluster version of the specified context in kubeconfig")
+
+	// BindPFlags can theroretically return an error if called with `nil` as an argument
+	// which should never happened after at least one flag was defined. That's why the output
+	// there is ignored.
+	viper.BindPFlags(clusterVersionCmd.Flags())
 }
