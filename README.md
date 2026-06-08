@@ -41,6 +41,22 @@ Use "cloudctl [command] --help" for more information about a command.
 ## Requirements and Setup
 Download the latest release from [here](https://github.com/cloudoperators/cloudctl/releases), move to a location in PATH and update file permissions.
 
+## Passing configuration options
+Configuration options for each command can be provided through command line parameters, environment variables (using `CLOUDCTL_` as a variable name prefix), and/or through configuration file.
+Configuration file location is searched in that order (first found takes precedence):
+* what is provided as a value for `--config` parameter
+* what is provided as a value for `$CLOUDCTL_CONFIG` environment variable
+* file paths:
+  * `./.cloudctl.yaml`
+  * `$HOME/.cloudctl.yaml`
+  * `./cloudctl.yaml`
+  * `$HOME/cloudctl.yaml`
+  * if `$XDG_CONFIG_HOME` is set:
+     * `$XDG_CONFIG_HOME/cloudctl/cloudctl.yaml`
+     * `$XDG_CONFIG_HOME/cloudctl.yaml`
+  * if not, finally falling back to:
+     * `$HOME/.config/cloudctl/cloudctl.yaml`
+     * `$HOME/.config/cloudctl.yaml`
 
 ## Support, Feedback, Contributing
 
