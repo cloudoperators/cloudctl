@@ -18,6 +18,7 @@ import (
 	greenhousemetav1alpha1 "github.com/cloudoperators/greenhouse/api/meta/v1alpha1"
 	"github.com/cloudoperators/greenhouse/api/v1alpha1"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -56,6 +57,11 @@ func init() {
 	syncCmd.Flags().StringVar(&kubeloginPath, "kubelogin-path", "kubelogin", "path to kubelogin command when using exec-plugin auth-type")
 	syncCmd.Flags().StringSliceVar(&kubeloginExtraArgs, "kubelogin-extra-args", nil, "extra arguments to pass to kubelogin exec plugin")
 	syncCmd.Flags().StringVar(&kubeloginTokenCacheDir, "kubelogin-token-cache-dir", "$(HOME)/.kube/cache/oidc-login", "token cache directory for kubelogin")
+
+	// BindPFlags can theroretically return an error if called with `nil` as an argument
+	// which should never happened after at least one flag was defined. That's why the output
+	// there is ignored.
+	viper.BindPFlags(syncCmd.Flags())
 }
 
 var syncCmd = &cobra.Command{
@@ -65,6 +71,19 @@ var syncCmd = &cobra.Command{
 }
 
 func runSync(cmd *cobra.Command, args []string) error {
+	// Use viper as a source of configuration
+	greenhouseClusterKubeconfig = viper.GetString("greenhouse-cluster-kubeconfig")
+	greenhouseClusterContext = viper.GetString("greenhouse-cluster-context")
+	greenhouseClusterNamespace = viper.GetString("greenhouse-cluster-namespace")
+	remoteClusterKubeconfig = viper.GetString("remote-cluster-kubeconfig")
+	remoteClusterName = viper.GetString("remote-cluster-name")
+	prefix = viper.GetString("prefix")
+	mergeIdenticalUsers = viper.GetBool("merge-identical-users")
+	authType = viper.GetString("auth-type")
+	kubeloginPath = viper.GetString("kubelogin-path")
+	kubeloginExtraArgs = viper.GetStringSlice("kubelogin-extra-args")
+	kubeloginTokenCacheDir = viper.GetString("kubelogin-token-cache-dir")
+
 	if greenhouseClusterKubeconfig == "" {
 		return fmt.Errorf("greenhouse cluster kubeconfig path is empty")
 	}

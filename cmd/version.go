@@ -9,6 +9,7 @@ import (
 	"runtime"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
 var (
@@ -28,11 +29,6 @@ type versionInfo struct {
 	Platform  string `json:"platform"`
 }
 
-var (
-	versionShort bool
-	versionJSON  bool
-)
-
 var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print the cloudctl version information",
@@ -46,7 +42,7 @@ var versionCmd = &cobra.Command{
 			Platform:  fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH),
 		}
 
-		if versionJSON {
+		if viper.GetBool("json") {
 			b, err := json.MarshalIndent(info, "", "  ")
 			if err != nil {
 				return err
@@ -55,7 +51,7 @@ var versionCmd = &cobra.Command{
 			return nil
 		}
 
-		if versionShort {
+		if viper.GetBool("short") {
 			fmt.Println(info.Version)
 			return nil
 		}
@@ -69,6 +65,11 @@ var versionCmd = &cobra.Command{
 }
 
 func init() {
-	versionCmd.Flags().BoolVar(&versionShort, "short", false, "print only the version number")
-	versionCmd.Flags().BoolVar(&versionJSON, "json", false, "print version information as JSON")
+	versionCmd.Flags().Bool("short", false, "print only the version number")
+	versionCmd.Flags().Bool("json", false, "print version information as JSON")
+
+	// BindPFlags can theroretically return an error if called with `nil` as an argument
+	// which should never happened after at least one flag was defined. That's why the output
+	// there is ignored.
+	viper.BindPFlags(versionCmd.Flags())
 }
