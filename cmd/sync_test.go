@@ -216,7 +216,7 @@ func TestSyncFlags_AuthTypeAndKubeloginDefaults(t *testing.T) {
 	// Ensure flags are registered on syncCmd with correct defaults
 	fAuthType := syncCmd.Flags().Lookup("auth-type")
 	g.Expect(fAuthType).ToNot(BeNil())
-	g.Expect(fAuthType.DefValue).To(Equal("auth-provider"))
+	g.Expect(fAuthType.DefValue).To(Equal("exec-plugin"))
 
 	fPath := syncCmd.Flags().Lookup("kubelogin-path")
 	g.Expect(fPath).ToNot(BeNil())

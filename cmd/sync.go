@@ -53,7 +53,7 @@ func init() {
 	syncCmd.Flags().BoolVar(&mergeIdenticalUsers, "merge-identical-users", true, "merge identical user information in kubeconfig file so that you only login once for the clusters that share the same auth info")
 
 	// Authentication output style flags
-	syncCmd.Flags().StringVar(&authType, "auth-type", "auth-provider", "authentication config style to write for users: auth-provider or exec-plugin")
+	syncCmd.Flags().StringVar(&authType, "auth-type", "exec-plugin", "authentication config style to write for users: auth-provider or exec-plugin")
 	syncCmd.Flags().StringVar(&kubeloginPath, "kubelogin-path", "kubelogin", "path to kubelogin command when using exec-plugin auth-type")
 	syncCmd.Flags().StringSliceVar(&kubeloginExtraArgs, "kubelogin-extra-args", nil, "extra arguments to pass to kubelogin exec plugin")
 	syncCmd.Flags().StringVar(&kubeloginTokenCacheDir, "kubelogin-token-cache-dir", "$(HOME)/.kube/cache/oidc-login", "token cache directory for kubelogin")
