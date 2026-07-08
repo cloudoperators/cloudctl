@@ -61,6 +61,27 @@ func TestConfigurationLoad(t *testing.T) {
 	g.Expect(viper.GetString("kubeconfig")).To(Equal("A"))
 }
 
+func TestEnvKeyReplacerDashToUnderscore(t *testing.T) {
+	g := NewWithT(t)
+
+	const envKey = "CLOUDCTL_GREENHOUSE_CLUSTER_KUBECONFIG"
+	const viperKey = "greenhouse-cluster-kubeconfig"
+	const testValue = "/tmp/test-kubeconfig"
+
+	orig := os.Getenv(envKey)
+	os.Setenv(envKey, testValue)
+
+	t.Cleanup(func() {
+		viper.Reset()
+		os.Setenv(envKey, orig)
+	})
+
+	g.Expect(setupConfig()).To(BeNil())
+
+	// The env key replacer must map CLOUDCTL_GREENHOUSE_CLUSTER_KUBECONFIG → greenhouse-cluster-kubeconfig
+	g.Expect(viper.GetString(viperKey)).To(Equal(testValue))
+}
+
 func TestMissingConfigurationFile(t *testing.T) {
 	g := NewWithT(t)
 
