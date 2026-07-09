@@ -690,7 +690,7 @@ func validateAuthType(authType, kubeloginPath string) error {
 		return nil
 	case "exec-plugin":
 		if _, err := exec.LookPath(kubeloginPath); err != nil {
-			return fmt.Errorf("kubelogin not found at %q: install kubelogin or set --kubelogin-path, or use --auth-type=auth-provider: %w", kubeloginPath, err)
+			return fmt.Errorf("kubelogin binary %q not found on PATH: install kubelogin or set --kubelogin-path, or use --auth-type=auth-provider: %w", kubeloginPath, err)
 		}
 		return nil
 	default:

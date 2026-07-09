@@ -136,6 +136,8 @@ status:
 		"--greenhouse-cluster-namespace", ns,
 		"--remote-cluster-kubeconfig", targetKubeconfig,
 		"--prefix", prefix,
+		// Use auth-provider to avoid requiring kubelogin on the E2E runner;
+		// the default is exec-plugin but that binary is not available in CI.
 		"--auth-type", "auth-provider",
 	); err != nil {
 		t.Fatalf("sync failed: %v (stderr: %s)", err, stderr)
