@@ -18,12 +18,29 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	clientcmd "k8s.io/client-go/tools/clientcmd"
+
+	"github.com/cloudoperators/cloudctl/cmd/output"
 )
 
 var clusterVersionCmd = &cobra.Command{
 	Use:   "cluster-version",
-	Short: "Prints the cluster version of the context in kubeconfig",
-	RunE:  runClusterVersion,
+	Short: "Print the Kubernetes server version for a kubeconfig context",
+	Long: `Queries the Kubernetes API server version for the given kubeconfig context.
+
+An unauthenticated GET to /version is attempted first (faster, no token
+refresh required). If the server requires authentication, cloudctl falls
+back to the standard authenticated discovery endpoint.
+
+Examples:
+  # Version of the current context
+  cloudctl cluster-version
+
+  # Version of a specific context
+  cloudctl cluster-version --context prod-eu
+
+  # Machine-readable output
+  cloudctl cluster-version --context prod-eu -o json`,
+	RunE: runClusterVersion,
 }
 
 var (
@@ -65,8 +82,13 @@ func runClusterVersion(cmd *cobra.Command, args []string) error {
 	parts = strings.Split(clean, "+")
 	clean = parts[0]
 	clusterVersion := strings.TrimPrefix(clean, "v")
-	fmt.Println(clusterVersion)
-	return nil
+
+	format, err := output.ParseFormat(viper.GetString("output"))
+	if err != nil {
+		return err
+	}
+	printer := output.New(format, output.IsTTY(), os.Stdout)
+	return printer.Print(output.ClusterVersionResult{Context: kubecontext, Version: clusterVersion})
 }
 
 // hasAuth returns true if the rest.Config contains any credential source.
@@ -140,8 +162,8 @@ func getUnauthenticatedVersion(cfg *rest.Config) (*version.Info, error) {
 }
 
 func init() {
-	clusterVersionCmd.Flags().StringVarP(&kubeconfig, "kubeconfig", "k", clientcmd.RecommendedHomeFile, "kubeconfig file path")
-	clusterVersionCmd.Flags().StringVarP(&kubecontext, "context", "c", "", "cluster version of the specified context in kubeconfig")
+	clusterVersionCmd.Flags().StringVarP(&kubeconfig, "kubeconfig", "k", clientcmd.RecommendedHomeFile, "Path to kubeconfig file")
+	clusterVersionCmd.Flags().StringVarP(&kubecontext, "context", "c", "", "Kubeconfig context to query (defaults to current context)")
 
 	// BindPFlags can theroretically return an error if called with `nil` as an argument
 	// which should never happened after at least one flag was defined. That's why the output

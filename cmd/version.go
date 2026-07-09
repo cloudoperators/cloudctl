@@ -4,12 +4,14 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
+	"os"
 	"runtime"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+
+	"github.com/cloudoperators/cloudctl/cmd/output"
 )
 
 var (
@@ -20,20 +22,21 @@ var (
 	BuildDate = "unknown"
 )
 
-type versionInfo struct {
-	Version   string `json:"version"`
-	GitCommit string `json:"gitCommit"`
-	BuildDate string `json:"buildDate"`
-	GoVersion string `json:"goVersion"`
-	Compiler  string `json:"compiler"`
-	Platform  string `json:"platform"`
-}
-
 var versionCmd = &cobra.Command{
 	Use:   "version",
-	Short: "Print the cloudctl version information",
+	Short: "Print cloudctl version and build information",
+	Long: `Prints the cloudctl version, git commit, build date, and Go toolchain details.
+
+Use --output to get machine-readable output for scripting:
+
+  cloudctl version -o json | jq .version
+  cloudctl version -o yaml
+
+Use --short to print only the version number (useful in shell scripts):
+
+  $(cloudctl version --short)`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		info := versionInfo{
+		info := output.VersionInfo{
 			Version:   Version,
 			GitCommit: GitCommit,
 			BuildDate: BuildDate,
@@ -42,31 +45,22 @@ var versionCmd = &cobra.Command{
 			Platform:  fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH),
 		}
 
-		if viper.GetBool("json") {
-			b, err := json.MarshalIndent(info, "", "  ")
-			if err != nil {
-				return err
-			}
-			fmt.Println(string(b))
-			return nil
-		}
-
 		if viper.GetBool("short") {
 			fmt.Println(info.Version)
 			return nil
 		}
 
-		fmt.Printf("cloudctl %s\n", info.Version)
-		fmt.Printf("  git commit: %s\n", info.GitCommit)
-		fmt.Printf("  build date: %s\n", info.BuildDate)
-		fmt.Printf("  go:         %s %s %s/%s\n", info.GoVersion, info.Compiler, runtime.GOOS, runtime.GOARCH)
-		return nil
+		format, err := output.ParseFormat(viper.GetString("output"))
+		if err != nil {
+			return err
+		}
+		printer := output.New(format, output.IsTTY(), os.Stdout)
+		return printer.Print(info)
 	},
 }
 
 func init() {
-	versionCmd.Flags().Bool("short", false, "print only the version number")
-	versionCmd.Flags().Bool("json", false, "print version information as JSON")
+	versionCmd.Flags().Bool("short", false, "Print only the version number")
 
 	// BindPFlags can theroretically return an error if called with `nil` as an argument
 	// which should never happened after at least one flag was defined. That's why the output

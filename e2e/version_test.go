@@ -20,7 +20,7 @@ func TestE2E_Version(t *testing.T) {
 	bin := resolveBin(t)
 	requireFileG(g, bin)
 
-	stdout, stderr, err := runCmd(bin, "version", "--json")
+	stdout, stderr, err := runCmd(bin, "version", "--output", "json")
 	g.Expect(err).ToNot(HaveOccurred(), "stderr: %s", stderr)
 
 	var vi versionInfo

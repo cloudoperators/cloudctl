@@ -5,6 +5,7 @@ package cmd
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,23 +19,35 @@ import (
 
 var rootCmd = &cobra.Command{
 	Use:   "cloudctl",
-	Short: "Manage and access Kubernetes clusters via Greenhouse",
-	Long: `cloudctl is a command line interface that helps:
-    
-    1) Fetch and merge kubeconfigs from the central Greenhouse cluster into your local kubeconfig
-    2) Sync contexts and credentials for seamless kubectl usage
-    3) Inspect the Kubernetes version of a target cluster
-    4) Print the cloudctl version and build information
+	Short: "Manage Kubernetes cluster access via Greenhouse",
+	Long: `cloudctl keeps your local kubeconfig in sync with the clusters registered
+in your Greenhouse organization — so kubectl just works.
+
+Commands:
+  sync              Fetch ClusterKubeconfigs from Greenhouse and merge them locally
+  cluster-version   Query the Kubernetes server version of a kubeconfig context
+  version           Print cloudctl build information
+
+Global flags available on every command:
+  -o, --output text|json|yaml   Output format (default: text)
+      --log-level debug|info|warn|error
+      --log-format text|json
 
 Examples:
-  - Merge/refresh kubeconfigs from Greenhouse:
-      cloudctl sync
+  # Sync all clusters for an organization
+  cloudctl sync -n my-org
 
-  - Show Kubernetes version for a specific context:
-      cloudctl cluster-version --context my-cluster
+  # Sync a single cluster, emit JSON for scripting
+  cloudctl sync -n my-org --remote-cluster-name prod-eu -o json
 
-  - Show cloudctl version:
-      cloudctl version`,
+  # Query Kubernetes version of a context
+  cloudctl cluster-version --context prod-eu
+
+  # Print version as YAML
+  cloudctl version -o yaml`,
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		return setupLogger()
+	},
 }
 
 var (
@@ -51,6 +64,9 @@ func init() {
 		cobra.CheckErr(setupConfig())
 	})
 	rootCmd.PersistentFlags().StringVar(&configFilePath, "config", "", "Path to configuration file")
+	rootCmd.PersistentFlags().String("log-level", "info", "Log verbosity: debug, info, warn, error")
+	rootCmd.PersistentFlags().String("log-format", "text", "Log format: text or json (written to stderr)")
+	rootCmd.PersistentFlags().StringP("output", "o", "text", "Output format: text, json, or yaml")
 
 	// BindPFlags can theroretically return an error if called with `nil` as an argument
 	// which should never happened after at least one flag was defined. That's why the output
@@ -135,4 +151,25 @@ func setupConfig() error {
 	}
 
 	return err
+}
+
+// setupLogger configures slog based on --log-level and --log-format flags.
+func setupLogger() error {
+	levelStr := viper.GetString("log-level")
+	format := viper.GetString("log-format")
+
+	var level slog.Level
+	if err := level.UnmarshalText([]byte(levelStr)); err != nil {
+		return err
+	}
+
+	opts := &slog.HandlerOptions{Level: level}
+	var handler slog.Handler
+	if format == "json" {
+		handler = slog.NewJSONHandler(os.Stderr, opts)
+	} else {
+		handler = slog.NewTextHandler(os.Stderr, opts)
+	}
+	slog.SetDefault(slog.New(handler))
+	return nil
 }
