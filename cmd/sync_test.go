@@ -217,8 +217,9 @@ func TestValidateAuthType(t *testing.T) {
 	g.Expect(validateAuthType("auth-provider", "nonexistent-binary")).To(BeNil())
 	g.Expect(validateAuthType("Auth-Provider", "nonexistent-binary")).To(BeNil())
 
-	// exec-plugin with a real binary on PATH succeeds
-	g.Expect(validateAuthType("exec-plugin", "true")).To(BeNil())
+	// exec-plugin with a real binary on PATH succeeds; use "go" since it is
+	// always available when running go test.
+	g.Expect(validateAuthType("exec-plugin", "go")).To(BeNil())
 
 	// exec-plugin with a missing binary fails with a helpful message
 	err := validateAuthType("exec-plugin", "nonexistent-kubelogin-binary")
