@@ -4,6 +4,7 @@
 package cmd
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
@@ -11,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -31,6 +33,8 @@ An unauthenticated GET to /version is attempted first (faster, no token
 refresh required). If the server requires authentication, cloudctl falls
 back to the standard authenticated discovery endpoint.
 
+If the API server is unreachable the command exits after --timeout (default 10s).
+
 Examples:
   # Version of the current context
   cloudctl cluster-version
@@ -39,7 +43,10 @@ Examples:
   cloudctl cluster-version --context prod-eu
 
   # Machine-readable output
-  cloudctl cluster-version --context prod-eu -o json`,
+  cloudctl cluster-version --context prod-eu -o json
+
+  # Shorter timeout when scripting
+  cloudctl cluster-version --context prod-eu --timeout 5s`,
 	RunE: runClusterVersion,
 }
 
@@ -49,35 +56,44 @@ var (
 )
 
 func runClusterVersion(cmd *cobra.Command, args []string) error {
-	// Use viper as a source of configuration
 	kubeconfig = viper.GetString("kubeconfig")
 	kubecontext = viper.GetString("context")
+
+	timeoutStr := viper.GetString("timeout")
+	timeout, err := time.ParseDuration(timeoutStr)
+	if err != nil {
+		return fmt.Errorf("invalid --timeout %q: %w", timeoutStr, err)
+	}
 
 	cfg, err := configWithContext(kubecontext, kubeconfig)
 	if err != nil {
 		return fmt.Errorf("failed to build kubeconfig with context %s: %w", kubecontext, err)
 	}
 
+	ctx, cancel := context.WithTimeout(cmd.Context(), timeout)
+	defer cancel()
+
 	// 1) Try unauthenticated GET /version
-	version, err := getUnauthenticatedVersion(cfg)
+	ver, err := getUnauthenticatedVersion(ctx, cfg)
 	if err != nil {
 		// 2) Fallback to authenticated
 		if !hasAuth(cfg) {
 			return fmt.Errorf("no authentication methods found in your kubeconfig. please authenticate (`kubelogin`, etc.) and try again")
 		}
 
+		cfg.Timeout = timeout
 		clientset, cerr := kubernetes.NewForConfig(cfg)
 		if cerr != nil {
 			return fmt.Errorf("failed to create client: %w", cerr)
 		}
-		version, err = clientset.Discovery().ServerVersion()
+		ver, err = clientset.Discovery().ServerVersion()
 		if err != nil {
 			return fmt.Errorf("authenticated version fetch failed: %w", err)
 		}
 	}
 
-	// print out the relevant fields
-	parts := strings.Split(version.GitVersion, "-")
+	// Strip build metadata so we get a clean semver string (e.g. "1.29.3").
+	parts := strings.Split(ver.GitVersion, "-")
 	clean := parts[0]
 	parts = strings.Split(clean, "+")
 	clean = parts[0]
@@ -114,18 +130,17 @@ func hasAuth(cfg *rest.Config) bool {
 	return false
 }
 
-// getUnauthenticatedVersion does a direct HTTP GET to /version,
-// using the same Host and CA / TLS settings from cfg, but no creds.
-func getUnauthenticatedVersion(cfg *rest.Config) (*version.Info, error) {
+// getUnauthenticatedVersion does a direct HTTP GET to /version using the same
+// Host and CA / TLS settings from cfg, but no credentials.
+// The provided context controls the request deadline.
+func getUnauthenticatedVersion(ctx context.Context, cfg *rest.Config) (*version.Info, error) {
 	url := strings.TrimRight(cfg.Host, "/") + "/version"
 
-	// build TLS config
 	tlsCfg := &tls.Config{}
 	if cfg.Insecure {
-		tlsCfg.InsecureSkipVerify = true
+		tlsCfg.InsecureSkipVerify = true // #nosec G402 — user explicitly opted in
 	}
 
-	// trust the same CA if provided
 	if len(cfg.CAData) > 0 {
 		pool := x509.NewCertPool()
 		if ok := pool.AppendCertsFromPEM(cfg.CAData); !ok {
@@ -145,7 +160,12 @@ func getUnauthenticatedVersion(cfg *rest.Config) (*version.Info, error) {
 	}
 
 	client := &http.Client{Transport: &http.Transport{TLSClientConfig: tlsCfg}}
-	resp, err := client.Get(url)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -165,9 +185,10 @@ func getUnauthenticatedVersion(cfg *rest.Config) (*version.Info, error) {
 func init() {
 	clusterVersionCmd.Flags().StringVarP(&kubeconfig, "kubeconfig", "k", clientcmd.RecommendedHomeFile, "Path to kubeconfig file")
 	clusterVersionCmd.Flags().StringVarP(&kubecontext, "context", "c", "", "Kubeconfig context to query (defaults to current context)")
+	clusterVersionCmd.Flags().String("timeout", "10s", "Maximum time to wait for the API server to respond")
 
-	// BindPFlags can theroretically return an error if called with `nil` as an argument
-	// which should never happened after at least one flag was defined. That's why the output
+	// BindPFlags can theoretically return an error if called with `nil` as an argument
+	// which should never happen after at least one flag was defined. That's why the output
 	// there is ignored.
 	viper.BindPFlags(clusterVersionCmd.Flags())
 }

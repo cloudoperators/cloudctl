@@ -4,6 +4,7 @@
 package cmd
 
 import (
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"net/http"
@@ -50,7 +51,7 @@ func TestGetUnauthenticatedVersion_OK(t *testing.T) {
 	defer srv.Close()
 
 	cfg := &rest.Config{Host: srv.URL, TLSClientConfig: rest.TLSClientConfig{Insecure: true}}
-	v, err := getUnauthenticatedVersion(cfg)
+	v, err := getUnauthenticatedVersion(context.Background(), cfg)
 	g.Expect(err).ToNot(HaveOccurred())
 	g.Expect(v).ToNot(BeNil())
 	g.Expect(v.GitVersion).To(Equal("v1.28.3"))
@@ -65,7 +66,7 @@ func TestGetUnauthenticatedVersion_StatusError(t *testing.T) {
 	defer srv.Close()
 
 	cfg := &rest.Config{Host: srv.URL, TLSClientConfig: rest.TLSClientConfig{Insecure: true}}
-	_, err := getUnauthenticatedVersion(cfg)
+	_, err := getUnauthenticatedVersion(context.Background(), cfg)
 	g.Expect(err).To(HaveOccurred())
 }
 
@@ -78,11 +79,11 @@ func TestGetUnauthenticatedVersion_InsecureTLS(t *testing.T) {
 	defer srv.Close()
 
 	cfgInsecure := &rest.Config{Host: srv.URL, TLSClientConfig: rest.TLSClientConfig{Insecure: true}}
-	_, err := getUnauthenticatedVersion(cfgInsecure)
+	_, err := getUnauthenticatedVersion(context.Background(), cfgInsecure)
 	g.Expect(err).ToNot(HaveOccurred())
 
 	cfgStrict := &rest.Config{Host: srv.URL, TLSClientConfig: rest.TLSClientConfig{Insecure: false}}
-	_, err = getUnauthenticatedVersion(cfgStrict)
+	_, err = getUnauthenticatedVersion(context.Background(), cfgStrict)
 	g.Expect(err).To(HaveOccurred())
 
 	_ = tls.Config{} // keep import used
