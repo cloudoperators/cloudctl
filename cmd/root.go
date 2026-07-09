@@ -7,6 +7,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -82,6 +83,7 @@ func setupConfig() error {
 
 	// Optionally read environment variables, config files, etc.
 	viper.SetEnvPrefix("CLOUDCTL")
+	viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
 	viper.AutomaticEnv()
 
 	viper.SetConfigType("yaml")

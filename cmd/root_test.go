@@ -5,6 +5,7 @@ package cmd
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/spf13/viper"
@@ -59,6 +60,26 @@ func TestConfigurationLoad(t *testing.T) {
 
 	// Check if `kubeconfig` variable was set to the value from temporary file
 	g.Expect(viper.GetString("kubeconfig")).To(Equal("A"))
+}
+
+func TestEnvKeyReplacerDashToUnderscore(t *testing.T) {
+	g := NewWithT(t)
+
+	const envKey = "CLOUDCTL_GREENHOUSE_CLUSTER_KUBECONFIG"
+	const viperKey = "greenhouse-cluster-kubeconfig"
+	testValue := filepath.Join(t.TempDir(), "test-kubeconfig")
+
+	t.Setenv(envKey, testValue)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("CLOUDCTL_CONFIG", "")
+	t.Chdir(t.TempDir())
+	t.Cleanup(func() { viper.Reset() })
+
+	g.Expect(setupConfig()).To(BeNil())
+
+	// The env key replacer must map CLOUDCTL_GREENHOUSE_CLUSTER_KUBECONFIG → greenhouse-cluster-kubeconfig
+	g.Expect(viper.GetString(viperKey)).To(Equal(testValue))
 }
 
 func TestMissingConfigurationFile(t *testing.T) {
