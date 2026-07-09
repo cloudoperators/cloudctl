@@ -87,7 +87,8 @@ func runClusterVersion(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	printer := output.New(format, output.IsTTY(), os.Stdout)
+	w := cmd.OutOrStdout()
+	printer := output.New(format, output.IsTTYWriter(w), w)
 	return printer.Print(output.ClusterVersionResult{Context: kubecontext, Version: clusterVersion})
 }
 

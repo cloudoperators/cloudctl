@@ -5,7 +5,6 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 	"runtime"
 
 	"github.com/spf13/cobra"
@@ -54,7 +53,8 @@ Use --short to print only the version number (useful in shell scripts):
 		if err != nil {
 			return err
 		}
-		printer := output.New(format, output.IsTTY(), os.Stdout)
+		w := cmd.OutOrStdout()
+		printer := output.New(format, output.IsTTYWriter(w), w)
 		return printer.Print(info)
 	},
 }

@@ -113,7 +113,8 @@ func runSync(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	printer := output.New(format, output.IsTTY(), os.Stdout)
+	w := cmd.OutOrStdout()
+	printer := output.New(format, output.IsTTYWriter(w), w)
 
 	if greenhouseClusterKubeconfig == "" {
 		return fmt.Errorf("greenhouse cluster kubeconfig path is empty")
@@ -203,7 +204,7 @@ func runSync(cmd *cobra.Command, args []string) error {
 	err = mergeKubeconfig(localConfig, serverConfig)
 	stopMerge()
 	if err != nil {
-		_ = printer.Print(buildSyncResult(ready, notReady))
+		_ = printer.Print(buildFailedSyncResult(ready, notReady, err))
 		return fmt.Errorf(`failed to merge ClusterKubeconfig: %w`, err)
 	}
 
@@ -249,6 +250,43 @@ func buildSyncResult(ready, notReady []v1alpha1.ClusterKubeconfig) output.SyncRe
 			Status:  output.ClusterSyncStatusSynced,
 		})
 		result.Synced++
+	}
+	for _, ckc := range notReady {
+		ctxName := ""
+		if len(ckc.Spec.Kubeconfig.Contexts) > 0 {
+			ctxName = ckc.Spec.Kubeconfig.Contexts[0].Name
+		}
+		result.Clusters = append(result.Clusters, output.ClusterSyncResult{
+			Name:    ckc.Name,
+			Context: ctxName,
+			Status:  output.ClusterSyncStatusSkipped,
+			Reason:  "not ready",
+		})
+		result.Skipped++
+	}
+	if result.Clusters == nil {
+		result.Clusters = []output.ClusterSyncResult{}
+	}
+	return result
+}
+
+// buildFailedSyncResult is like buildSyncResult but marks all ready clusters as failed
+// with the given error as the reason, used when the merge step itself fails.
+func buildFailedSyncResult(ready, notReady []v1alpha1.ClusterKubeconfig, mergeErr error) output.SyncResult {
+	result := output.SyncResult{}
+	reason := mergeErr.Error()
+	for _, ckc := range ready {
+		ctxName := ""
+		if len(ckc.Spec.Kubeconfig.Contexts) > 0 {
+			ctxName = ckc.Spec.Kubeconfig.Contexts[0].Name
+		}
+		result.Clusters = append(result.Clusters, output.ClusterSyncResult{
+			Name:    ckc.Name,
+			Context: ctxName,
+			Status:  output.ClusterSyncStatusFailed,
+			Reason:  reason,
+		})
+		result.Failed++
 	}
 	for _, ckc := range notReady {
 		ctxName := ""

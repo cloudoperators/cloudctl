@@ -5,6 +5,7 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -165,10 +166,13 @@ func setupLogger() error {
 
 	opts := &slog.HandlerOptions{Level: level}
 	var handler slog.Handler
-	if format == "json" {
+	switch format {
+	case "json":
 		handler = slog.NewJSONHandler(os.Stderr, opts)
-	} else {
+	case "text":
 		handler = slog.NewTextHandler(os.Stderr, opts)
+	default:
+		return fmt.Errorf("invalid --log-format %q: must be \"text\" or \"json\"", format)
 	}
 	slog.SetDefault(slog.New(handler))
 	return nil

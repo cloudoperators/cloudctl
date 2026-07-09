@@ -53,7 +53,7 @@ All commands accept `-o / --output`:
 | Value  | Description                                              |
 |--------|----------------------------------------------------------|
 | `text` | Human-readable (default). Interactive terminals get a spinner and styled table. |
-| `json` | Compact JSON — suitable for `jq` pipelines.              |
+| `json` | Indented JSON — suitable for `jq` pipelines.             |
 | `yaml` | YAML — suitable for GitOps tooling.                      |
 
 ```sh
@@ -94,7 +94,8 @@ cloudctl sync
 1. Path given by `--config` or `$CLOUDCTL_CONFIG`
 2. `./.cloudctl.yaml` or `~/.cloudctl.yaml`
 3. `./cloudctl.yaml` or `~/.cloudctl.yaml`
-4. `$XDG_CONFIG_HOME/cloudctl/cloudctl.yaml` (or `~/.config/cloudctl/cloudctl.yaml`)
+4. `$XDG_CONFIG_HOME/cloudctl/cloudctl.yaml` or `$XDG_CONFIG_HOME/cloudctl.yaml`
+   (falls back to `~/.config/cloudctl/cloudctl.yaml` or `~/.config/cloudctl.yaml` when `$XDG_CONFIG_HOME` is unset)
 
 Example `~/.cloudctl.yaml`:
 ```yaml
