@@ -683,14 +683,14 @@ func extensionRaw(m map[string]runtime.Object, name string) []byte {
 }
 
 // validateAuthType checks that authType is one of the accepted values and, when
-// exec-plugin is selected, that the kubelogin binary is resolvable on PATH.
+// exec-plugin is selected, that the kubelogin binary is resolvable.
 func validateAuthType(authType, kubeloginPath string) error {
 	switch strings.ToLower(authType) {
 	case "auth-provider":
 		return nil
 	case "exec-plugin":
 		if _, err := exec.LookPath(kubeloginPath); err != nil {
-			return fmt.Errorf("kubelogin binary %q not found on PATH: install kubelogin or set --kubelogin-path, or use --auth-type=auth-provider: %w", kubeloginPath, err)
+			return fmt.Errorf("could not resolve kubelogin binary %q: install kubelogin or set --kubelogin-path, or use --auth-type=auth-provider: %w", kubeloginPath, err)
 		}
 		return nil
 	default:
