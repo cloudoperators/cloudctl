@@ -5,6 +5,7 @@ package cmd
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/spf13/viper"
@@ -66,7 +67,7 @@ func TestEnvKeyReplacerDashToUnderscore(t *testing.T) {
 
 	const envKey = "CLOUDCTL_GREENHOUSE_CLUSTER_KUBECONFIG"
 	const viperKey = "greenhouse-cluster-kubeconfig"
-	const testValue = "/tmp/test-kubeconfig"
+	testValue := filepath.Join(t.TempDir(), "test-kubeconfig")
 
 	t.Setenv(envKey, testValue)
 	t.Setenv("HOME", t.TempDir())
