@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -21,8 +22,18 @@ func main() {
 	defer stop()
 
 	if err := cmd.Execute(ctx); err != nil {
-		// Print errors to stderr
-		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, friendlyError(err))
 		os.Exit(1)
 	}
+}
+
+// friendlyError converts known noisy error types into concise messages.
+func friendlyError(err error) string {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "Error: timed out waiting for the API server to respond. The endpoint may be unreachable. Try --timeout to adjust the deadline."
+	}
+	if errors.Is(err, context.Canceled) {
+		return "Error: operation cancelled."
+	}
+	return "Error: " + err.Error()
 }

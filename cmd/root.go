@@ -19,8 +19,10 @@ import (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "cloudctl",
-	Short: "Manage Kubernetes cluster access via Greenhouse",
+	Use:          "cloudctl",
+	Short:        "Manage Kubernetes cluster access via Greenhouse",
+	SilenceUsage: true,
+	SilenceErrors: true,
 	Long: `cloudctl keeps your local kubeconfig in sync with the clusters registered
 in your Greenhouse organization — so kubectl just works.
 
