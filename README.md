@@ -119,7 +119,7 @@ Flags:
   -c, --greenhouse-cluster-context      Context inside the Greenhouse kubeconfig
   -n, --greenhouse-cluster-namespace    Greenhouse organization namespace (required)
   -r, --remote-cluster-kubeconfig       Local kubeconfig to merge into (default: ~/.kube/config)
-      --remote-cluster-name             Sync only this cluster (default: all)
+      --remote-cluster-name             Sync only this cluster (default: all ready clusters)
       --prefix                          Prefix for managed kubeconfig entries (default: cloudctl)
       --merge-identical-users           Share a single auth entry for clusters with identical OIDC config (default: true)
       --auth-type                       auth-provider or exec-plugin (default: exec-plugin)

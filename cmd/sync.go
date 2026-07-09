@@ -59,7 +59,11 @@ func init() {
 	syncCmd.Flags().StringVar(&authType, "auth-type", "exec-plugin", "Auth credential style: exec-plugin (kubelogin) or auth-provider (legacy)")
 	syncCmd.Flags().StringVar(&kubeloginPath, "kubelogin-path", "kubelogin", "Path to the kubelogin binary (used with --auth-type=exec-plugin)")
 	syncCmd.Flags().StringSliceVar(&kubeloginExtraArgs, "kubelogin-extra-args", nil, "Additional arguments passed to the kubelogin exec plugin")
-	syncCmd.Flags().StringVar(&kubeloginTokenCacheDir, "kubelogin-token-cache-dir", "$(HOME)/.kube/cache/oidc-login", "Directory for OIDC token cache files")
+	defaultTokenCacheDir := "$(HOME)/.kube/cache/oidc-login"
+	if home, err := os.UserHomeDir(); err == nil {
+		defaultTokenCacheDir = home + "/.kube/cache/oidc-login"
+	}
+	syncCmd.Flags().StringVar(&kubeloginTokenCacheDir, "kubelogin-token-cache-dir", defaultTokenCacheDir, "Directory for OIDC token cache files")
 
 	// BindPFlags can theroretically return an error if called with `nil` as an argument
 	// which should never happened after at least one flag was defined. That's why the output

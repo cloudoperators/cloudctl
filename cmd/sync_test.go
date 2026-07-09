@@ -255,7 +255,8 @@ func TestSyncFlags_AuthTypeAndKubeloginDefaults(t *testing.T) {
 
 	fCache := syncCmd.Flags().Lookup("kubelogin-token-cache-dir")
 	g.Expect(fCache).ToNot(BeNil())
-	g.Expect(fCache.DefValue).To(Equal("$(HOME)/.kube/cache/oidc-login"))
+	home, _ := os.UserHomeDir()
+	g.Expect(fCache.DefValue).To(Equal(home + "/.kube/cache/oidc-login"))
 }
 
 func TestBuildKubeloginArgs_MappingAndExtras(t *testing.T) {

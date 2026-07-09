@@ -66,7 +66,7 @@ func runClusterVersion(cmd *cobra.Command, args []string) error {
 
 	cfg, err := configWithContext(kubecontext, kubeconfig)
 	if err != nil {
-		return fmt.Errorf("failed to build kubeconfig with context %s: %w", kubecontext, err)
+		return fmt.Errorf("failed to build kubeconfig with context %q: %w", kubecontext, err)
 	}
 
 	// Resolve the actual context name used so the output is never empty.
@@ -89,7 +89,7 @@ func runClusterVersion(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		// 2) Fallback to authenticated
 		if !hasAuth(cfg) {
-			return fmt.Errorf("no authentication methods found in your kubeconfig. please authenticate (`kubelogin`, etc.) and try again")
+			return fmt.Errorf("no authentication methods found in your kubeconfig. Please authenticate (`kubelogin`, etc.) and try again")
 		}
 
 		ver, err = getAuthenticatedVersion(ctx, cfg)
