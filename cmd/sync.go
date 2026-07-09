@@ -12,6 +12,7 @@ import (
 	"log"
 	"maps"
 	"os"
+	"os/exec"
 	"sort"
 	"strings"
 
@@ -90,6 +91,10 @@ func runSync(cmd *cobra.Command, args []string) error {
 
 	if _, err := os.Stat(greenhouseClusterKubeconfig); err != nil {
 		return fmt.Errorf("greenhouse cluster kubeconfig file not found at %q: %w", greenhouseClusterKubeconfig, err)
+	}
+
+	if err := validateAuthType(authType, kubeloginPath); err != nil {
+		return err
 	}
 
 	var (
@@ -649,7 +654,7 @@ func mergeAuthInfo(serverAuth, localAuth *clientcmdapi.AuthInfo) *clientcmdapi.A
 	return mergedAuth
 }
 
-// labelsExtensionEqual returns true if the \"labels\" named extension is equal in both maps.
+// labelsExtensionEqual returns true if the "labels" named extension is equal in both maps.
 func labelsExtensionEqual(a, b map[string]runtime.Object) bool {
 	ar := extensionRaw(a, "labels")
 	br := extensionRaw(b, "labels")
@@ -674,5 +679,21 @@ func extensionRaw(m map[string]runtime.Object, name string) []byte {
 			return nil
 		}
 		return bytes.TrimSpace(b)
+	}
+}
+
+// validateAuthType checks that authType is one of the accepted values and, when
+// exec-plugin is selected, that the kubelogin binary is resolvable on PATH.
+func validateAuthType(authType, kubeloginPath string) error {
+	switch strings.ToLower(authType) {
+	case "auth-provider":
+		return nil
+	case "exec-plugin":
+		if _, err := exec.LookPath(kubeloginPath); err != nil {
+			return fmt.Errorf("kubelogin not found at %q: install kubelogin or set --kubelogin-path, or use --auth-type=auth-provider", kubeloginPath)
+		}
+		return nil
+	default:
+		return fmt.Errorf("invalid --auth-type %q: must be one of \"auth-provider\" or \"exec-plugin\"", authType)
 	}
 }

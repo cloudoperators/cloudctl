@@ -210,6 +210,28 @@ func TestFilterReady_EmptyAndNoneReady(t *testing.T) {
 
 // ---- New tests for exec-plugin flags and helpers ----
 
+func TestValidateAuthType(t *testing.T) {
+	g := NewWithT(t)
+
+	// auth-provider is always valid, no binary lookup needed
+	g.Expect(validateAuthType("auth-provider", "nonexistent-binary")).To(BeNil())
+	g.Expect(validateAuthType("Auth-Provider", "nonexistent-binary")).To(BeNil())
+
+	// exec-plugin with a real binary on PATH succeeds
+	g.Expect(validateAuthType("exec-plugin", "true")).To(BeNil())
+
+	// exec-plugin with a missing binary fails with a helpful message
+	err := validateAuthType("exec-plugin", "nonexistent-kubelogin-binary")
+	g.Expect(err).To(HaveOccurred())
+	g.Expect(err.Error()).To(ContainSubstring("--kubelogin-path"))
+	g.Expect(err.Error()).To(ContainSubstring("--auth-type=auth-provider"))
+
+	// unknown value is rejected
+	err = validateAuthType("bad-value", "")
+	g.Expect(err).To(HaveOccurred())
+	g.Expect(err.Error()).To(ContainSubstring("invalid --auth-type"))
+}
+
 func TestSyncFlags_AuthTypeAndKubeloginDefaults(t *testing.T) {
 	g := NewWithT(t)
 
