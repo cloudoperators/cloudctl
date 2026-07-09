@@ -136,6 +136,7 @@ status:
 		"--greenhouse-cluster-namespace", ns,
 		"--remote-cluster-kubeconfig", targetKubeconfig,
 		"--prefix", prefix,
+		"--auth-type", "auth-provider",
 	); err != nil {
 		t.Fatalf("sync failed: %v (stderr: %s)", err, stderr)
 	}
