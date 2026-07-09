@@ -68,13 +68,8 @@ func TestEnvKeyReplacerDashToUnderscore(t *testing.T) {
 	const viperKey = "greenhouse-cluster-kubeconfig"
 	const testValue = "/tmp/test-kubeconfig"
 
-	orig := os.Getenv(envKey)
-	os.Setenv(envKey, testValue)
-
-	t.Cleanup(func() {
-		viper.Reset()
-		os.Setenv(envKey, orig)
-	})
+	t.Setenv(envKey, testValue)
+	t.Cleanup(func() { viper.Reset() })
 
 	g.Expect(setupConfig()).To(BeNil())
 
