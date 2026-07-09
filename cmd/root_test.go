@@ -70,6 +70,8 @@ func TestEnvKeyReplacerDashToUnderscore(t *testing.T) {
 
 	t.Setenv(envKey, testValue)
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Chdir(t.TempDir())
 	t.Cleanup(func() { viper.Reset() })
 
 	g.Expect(setupConfig()).To(BeNil())
