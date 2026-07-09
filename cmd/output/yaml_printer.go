@@ -23,6 +23,11 @@ func (p *yamlPrinter) Print(v any) error {
 	return nil
 }
 
+func (p *yamlPrinter) PrintError(err error) {
+	b, _ := yaml.Marshal(ErrorResult{Error: err.Error()})
+	fmt.Fprint(p.w, string(b))
+}
+
 func (p *yamlPrinter) StartSpinner(_ string) func() {
 	return func() {}
 }

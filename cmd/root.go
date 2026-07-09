@@ -62,6 +62,12 @@ func Execute(ctx context.Context) error {
 	return rootCmd.ExecuteContext(ctx)
 }
 
+// OutputFormat returns the value of the --output flag after flag parsing.
+// It is safe to call after Execute returns.
+func OutputFormat() string {
+	return viper.GetString("output")
+}
+
 func init() {
 	cobra.OnInitialize(func() {
 		cobra.CheckErr(setupConfig())

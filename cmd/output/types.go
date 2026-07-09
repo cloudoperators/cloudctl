@@ -43,3 +43,10 @@ type VersionInfo struct {
 	Compiler  string `json:"compiler"  yaml:"compiler"`
 	Platform  string `json:"platform"  yaml:"platform"`
 }
+
+// ErrorResult is the structured representation of a fatal command error.
+// It is used when the output format is json or yaml so that errors are
+// machine-parseable in the same way as successful output.
+type ErrorResult struct {
+	Error string `json:"error" yaml:"error"`
+}

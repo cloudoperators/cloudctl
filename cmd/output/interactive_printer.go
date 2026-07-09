@@ -100,6 +100,10 @@ func (p *interactivePrinter) Print(v any) error {
 	return nil
 }
 
+func (p *interactivePrinter) PrintError(err error) {
+	fmt.Fprintf(p.w, "%s %s\n", styleRed.Render("Error:"), err.Error())
+}
+
 func (p *interactivePrinter) printSyncResult(r SyncResult) {
 	total := r.Synced + r.Skipped + r.Failed
 

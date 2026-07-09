@@ -74,6 +74,10 @@ func (p *plainPrinter) Print(v any) error {
 	return nil
 }
 
+func (p *plainPrinter) PrintError(err error) {
+	fmt.Fprintf(p.w, "Error: %s\n", err.Error())
+}
+
 func (p *plainPrinter) StartSpinner(_ string) func() {
 	return func() {}
 }
