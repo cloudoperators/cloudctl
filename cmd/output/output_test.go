@@ -142,12 +142,39 @@ func TestPlainPrinter_SyncResult(t *testing.T) {
 	g.Expect(p.Print(result)).To(Succeed())
 
 	out := buf.String()
-	g.Expect(out).To(ContainSubstring("[+]"))
-	g.Expect(out).To(ContainSubstring("[-]"))
-	g.Expect(out).To(ContainSubstring("[!]"))
-	g.Expect(out).To(ContainSubstring("synced=1"))
-	g.Expect(out).To(ContainSubstring("skipped=1"))
-	g.Expect(out).To(ContainSubstring("failed=1"))
+	// Synced clusters are not listed individually.
+	g.Expect(out).ToNot(ContainSubstring("[+]"))
+	// Skipped and failed clusters appear with their reason.
+	g.Expect(out).To(ContainSubstring("[-] b"))
+	g.Expect(out).To(ContainSubstring("[!] c"))
+	g.Expect(out).To(ContainSubstring("error"))
+	// Summary is a human-readable sentence.
+	g.Expect(out).To(ContainSubstring("Synced 1 of 3"))
+	g.Expect(out).To(ContainSubstring("1 skipped"))
+	g.Expect(out).To(ContainSubstring("1 failed"))
+}
+
+func TestPlainPrinter_SyncResult_AllSynced(t *testing.T) {
+	g := NewWithT(t)
+	var buf bytes.Buffer
+	p := output.New(output.FormatText, false, &buf)
+	result := output.SyncResult{
+		Clusters: []output.ClusterSyncResult{
+			{Name: "a", Status: output.ClusterSyncStatusSynced},
+			{Name: "b", Status: output.ClusterSyncStatusSynced},
+		},
+		Synced: 2,
+	}
+	g.Expect(p.Print(result)).To(Succeed())
+	g.Expect(buf.String()).To(ContainSubstring("Synced all 2 clusters successfully."))
+}
+
+func TestPlainPrinter_SyncResult_NoClusters(t *testing.T) {
+	g := NewWithT(t)
+	var buf bytes.Buffer
+	p := output.New(output.FormatText, false, &buf)
+	g.Expect(p.Print(output.SyncResult{})).To(Succeed())
+	g.Expect(buf.String()).To(ContainSubstring("No clusters found to sync."))
 }
 
 func TestPlainPrinter_ClusterVersionResult(t *testing.T) {
@@ -157,7 +184,7 @@ func TestPlainPrinter_ClusterVersionResult(t *testing.T) {
 	g.Expect(p.Print(output.ClusterVersionResult{Context: "my-ctx", Version: "1.29.0"})).To(Succeed())
 
 	out := strings.TrimSpace(buf.String())
-	g.Expect(out).To(Equal("1.29.0"))
+	g.Expect(out).To(Equal("Kubernetes version: 1.29.0"))
 }
 
 // ---------------------------------------------------------------------------

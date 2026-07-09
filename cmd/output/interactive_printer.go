@@ -88,7 +88,7 @@ func (p *interactivePrinter) Print(v any) error {
 	case SyncResult:
 		p.printSyncResult(t)
 	case ClusterVersionResult:
-		fmt.Fprintf(p.w, "%s %s\n", styleFaint.Render("cluster version:"), styleBold.Render(t.Version))
+		fmt.Fprintf(p.w, "%s %s\n", styleFaint.Render("Kubernetes version:"), styleBold.Render(t.Version))
 	case VersionInfo:
 		fmt.Fprintf(p.w, "%s\n", styleHeader.Render("cloudctl "+t.Version))
 		fmt.Fprintf(p.w, "  git commit: %s\n", t.GitCommit)
@@ -101,59 +101,82 @@ func (p *interactivePrinter) Print(v any) error {
 }
 
 func (p *interactivePrinter) printSyncResult(r SyncResult) {
-	// Column widths
-	const (
-		colCluster = 30
-		colContext = 30
-		colStatus  = 9
-	)
+	total := r.Synced + r.Skipped + r.Failed
 
-	// Header
-	header := fmt.Sprintf("%-*s  %-*s  %-*s  %s",
-		colCluster, "CLUSTER",
-		colContext, "CONTEXT",
-		colStatus, "STATUS",
-		"REASON",
-	)
-	fmt.Fprintln(p.w, styleHeader.Render(header))
-
+	// Collect only clusters that need attention.
+	var issues []ClusterSyncResult
 	for _, c := range r.Clusters {
-		var icon, statusStr string
-		switch c.Status {
-		case ClusterSyncStatusSynced:
-			icon = styleGreen.Render("✓")
-			statusStr = styleGreen.Render(string(c.Status))
-		case ClusterSyncStatusFailed:
-			icon = styleRed.Render("✗")
-			statusStr = styleRed.Render(string(c.Status))
-		default:
-			icon = styleYellow.Render("!")
-			statusStr = styleYellow.Render(string(c.Status))
+		if c.Status != ClusterSyncStatusSynced {
+			issues = append(issues, c)
 		}
-
-		name := c.Name
-		if len(name) > colCluster-2 {
-			name = name[:colCluster-5] + "..."
-		}
-		ctx := c.Context
-		if len(ctx) > colContext-2 {
-			ctx = ctx[:colContext-5] + "..."
-		}
-
-		fmt.Fprintf(p.w, "%s %-*s  %-*s  %-*s  %s\n",
-			icon,
-			colCluster-1, name,
-			colContext, ctx,
-			colStatus, statusStr,
-			c.Reason,
-		)
 	}
 
-	// Summary footer
-	summary := fmt.Sprintf("synced=%s  skipped=%s  failed=%s",
-		styleGreen.Render(fmt.Sprintf("%d", r.Synced)),
-		styleYellow.Render(fmt.Sprintf("%d", r.Skipped)),
-		styleRed.Render(fmt.Sprintf("%d", r.Failed)),
-	)
-	fmt.Fprintf(p.w, "\n%s\n", summary)
+	if len(issues) > 0 {
+		const (
+			colCluster = 30
+			colStatus  = 9
+		)
+		header := fmt.Sprintf("%-*s  %-*s  %s", colCluster, "CLUSTER", colStatus, "STATUS", "REASON")
+		fmt.Fprintln(p.w, styleHeader.Render(header))
+
+		for _, c := range issues {
+			var icon, statusStr string
+			switch c.Status {
+			case ClusterSyncStatusFailed:
+				icon = styleRed.Render("✗")
+				statusStr = styleRed.Render("failed")
+			default:
+				icon = styleYellow.Render("!")
+				statusStr = styleYellow.Render("skipped")
+			}
+
+			name := c.Name
+			if len(name) > colCluster-2 {
+				name = name[:colCluster-5] + "..."
+			}
+			reason := c.Reason
+			if reason == "" {
+				if c.Status == ClusterSyncStatusSkipped {
+					reason = "not ready"
+				} else {
+					reason = "unknown error"
+				}
+			}
+
+			fmt.Fprintf(p.w, "%s %-*s  %-*s  %s\n",
+				icon, colCluster-1, name, colStatus, statusStr, reason,
+			)
+		}
+		fmt.Fprintln(p.w)
+	}
+
+	// Summary sentence.
+	var summary string
+	switch {
+	case total == 0:
+		summary = styleFaint.Render("No clusters found to sync.")
+	case r.Failed > 0 && r.Skipped > 0:
+		summary = fmt.Sprintf("%s  %s  %s",
+			styleGreen.Render(fmt.Sprintf("Synced %d of %d cluster(s).", r.Synced, total)),
+			styleYellow.Render(fmt.Sprintf("%d skipped,", r.Skipped)),
+			styleRed.Render(fmt.Sprintf("%d failed.", r.Failed)),
+		)
+	case r.Failed > 0:
+		summary = fmt.Sprintf("%s  %s",
+			styleGreen.Render(fmt.Sprintf("Synced %d of %d cluster(s).", r.Synced, total)),
+			styleRed.Render(fmt.Sprintf("%d failed.", r.Failed)),
+		)
+	case r.Skipped > 0:
+		summary = fmt.Sprintf("%s  %s",
+			styleGreen.Render(fmt.Sprintf("Synced %d of %d cluster(s).", r.Synced, total)),
+			styleYellow.Render(fmt.Sprintf("%d skipped (not ready).", r.Skipped)),
+		)
+	default:
+		if total == 1 {
+			summary = styleGreen.Render("Synced 1 cluster successfully.")
+		} else {
+			summary = styleGreen.Render(fmt.Sprintf("Synced all %d clusters successfully.", total))
+		}
+	}
+	fmt.Fprintf(p.w, "%s\n", summary)
 }

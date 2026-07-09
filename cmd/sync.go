@@ -182,7 +182,6 @@ func runSync(cmd *cobra.Command, args []string) error {
 	ready, notReady := partitionReady(allKubeconfigs)
 
 	if len(ready) == 0 {
-		slog.Info("no ready ClusterKubeconfigs found to sync")
 		return printer.Print(buildSyncResult(nil, notReady))
 	}
 
