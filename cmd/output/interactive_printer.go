@@ -84,27 +84,41 @@ func (p *interactivePrinter) StartSpinner(label string) func() {
 }
 
 func (p *interactivePrinter) Print(v any) error {
+	var writeErr error
+	w := func(format string, a ...any) {
+		if writeErr != nil {
+			return
+		}
+		_, writeErr = fmt.Fprintf(p.w, format, a...)
+	}
 	switch t := v.(type) {
 	case SyncResult:
-		p.printSyncResult(t)
+		writeErr = p.printSyncResult(t)
 	case ClusterVersionResult:
-		fmt.Fprintf(p.w, "%s %s\n", styleFaint.Render("Kubernetes version:"), styleBold.Render(t.Version))
+		w("%s %s\n", styleFaint.Render("Kubernetes version:"), styleBold.Render(t.Version))
 	case VersionInfo:
-		fmt.Fprintf(p.w, "%s\n", styleHeader.Render("cloudctl "+t.Version))
-		fmt.Fprintf(p.w, "  git commit: %s\n", t.GitCommit)
-		fmt.Fprintf(p.w, "  build date: %s\n", t.BuildDate)
-		fmt.Fprintf(p.w, "  go:         %s %s %s\n", t.GoVersion, t.Compiler, t.Platform)
+		w("%s\n", styleHeader.Render("cloudctl "+t.Version))
+		w("  git commit: %s\n", t.GitCommit)
+		w("  build date: %s\n", t.BuildDate)
+		w("  go:         %s %s %s\n", t.GoVersion, t.Compiler, t.Platform)
 	default:
-		fmt.Fprintf(p.w, "%v\n", v)
+		w("%v\n", v)
 	}
-	return nil
+	return writeErr
 }
 
 func (p *interactivePrinter) PrintError(err error) {
 	fmt.Fprintf(p.w, "%s %s\n", styleRed.Render("Error:"), err.Error())
 }
 
-func (p *interactivePrinter) printSyncResult(r SyncResult) {
+func (p *interactivePrinter) printSyncResult(r SyncResult) error {
+	var writeErr error
+	w := func(format string, a ...any) {
+		if writeErr != nil {
+			return
+		}
+		_, writeErr = fmt.Fprintf(p.w, format, a...)
+	}
 	total := r.Synced + r.Skipped + r.Failed
 
 	// Collect only clusters that need attention.
@@ -121,7 +135,7 @@ func (p *interactivePrinter) printSyncResult(r SyncResult) {
 			colStatus  = 9
 		)
 		header := fmt.Sprintf("%-*s  %-*s  %s", colCluster, "CLUSTER", colStatus, "STATUS", "REASON")
-		fmt.Fprintln(p.w, styleHeader.Render(header))
+		w("%s\n", styleHeader.Render(header))
 
 		for _, c := range issues {
 			var icon, statusStr string
@@ -147,11 +161,11 @@ func (p *interactivePrinter) printSyncResult(r SyncResult) {
 				}
 			}
 
-			fmt.Fprintf(p.w, "%s %-*s  %-*s  %s\n",
+			w("%s %-*s  %-*s  %s\n",
 				icon, colCluster-1, name, colStatus, statusStr, reason,
 			)
 		}
-		fmt.Fprintln(p.w)
+		w("\n")
 	}
 
 	// Summary sentence.
@@ -182,5 +196,6 @@ func (p *interactivePrinter) printSyncResult(r SyncResult) {
 			summary = styleGreen.Render(fmt.Sprintf("Synced all %d clusters successfully.", total))
 		}
 	}
-	fmt.Fprintf(p.w, "%s\n", summary)
+	w("%s\n", summary)
+	return writeErr
 }

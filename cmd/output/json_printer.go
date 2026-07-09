@@ -18,8 +18,8 @@ func (p *jsonPrinter) Print(v any) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(p.w, string(b))
-	return nil
+	_, err = fmt.Fprintln(p.w, string(b))
+	return err
 }
 
 func (p *jsonPrinter) PrintError(err error) {

@@ -19,8 +19,8 @@ func (p *yamlPrinter) Print(v any) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprint(p.w, string(b))
-	return nil
+	_, err = fmt.Fprint(p.w, string(b))
+	return err
 }
 
 func (p *yamlPrinter) PrintError(err error) {
