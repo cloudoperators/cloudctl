@@ -19,9 +19,9 @@ import (
 )
 
 var rootCmd = &cobra.Command{
-	Use:          "cloudctl",
-	Short:        "Manage Kubernetes cluster access via Greenhouse",
-	SilenceUsage: true,
+	Use:           "cloudctl",
+	Short:         "Manage Kubernetes cluster access via Greenhouse",
+	SilenceUsage:  true,
 	SilenceErrors: true,
 	Long: `cloudctl keeps your local kubeconfig in sync with the clusters registered
 in your Greenhouse organization — so kubectl just works.
@@ -169,7 +169,7 @@ func setupLogger() error {
 
 	var level slog.Level
 	if err := level.UnmarshalText([]byte(levelStr)); err != nil {
-		return err
+		return fmt.Errorf("invalid --log-level %q: must be one of \"debug\", \"info\", \"warn\", \"error\"", levelStr)
 	}
 
 	opts := &slog.HandlerOptions{Level: level}
