@@ -70,6 +70,18 @@ func runClusterVersion(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to build kubeconfig with context %s: %w", kubecontext, err)
 	}
 
+	// Resolve the actual context name used so the output is never empty.
+	// When --context is not given, kubecontext is "" and we fall back to the
+	// current-context field from the kubeconfig.
+	effectiveContext := kubecontext
+	if effectiveContext == "" {
+		loadingRules := clientcmd.ClientConfigLoadingRules{ExplicitPath: kubeconfig}
+		raw, rawErr := loadingRules.Load()
+		if rawErr == nil && raw != nil {
+			effectiveContext = raw.CurrentContext
+		}
+	}
+
 	ctx, cancel := context.WithTimeout(cmd.Context(), timeout)
 	defer cancel()
 
@@ -105,7 +117,7 @@ func runClusterVersion(cmd *cobra.Command, args []string) error {
 	}
 	w := cmd.OutOrStdout()
 	printer := output.New(format, output.IsTTYWriter(w), w)
-	return printer.Print(output.ClusterVersionResult{Context: kubecontext, Version: clusterVersion})
+	return printer.Print(output.ClusterVersionResult{Context: effectiveContext, Version: clusterVersion})
 }
 
 // hasAuth returns true if the rest.Config contains any credential source.

@@ -33,7 +33,7 @@ Use --output to get machine-readable output for scripting:
 
 Use --short to print only the version number (useful in shell scripts):
 
-  $(cloudctl version --short)`,
+  VERSION=$(cloudctl version --short)`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		info := output.VersionInfo{
 			Version:   Version,

@@ -93,7 +93,7 @@ cloudctl sync
 
 1. Path given by `--config` or `$CLOUDCTL_CONFIG`
 2. `./.cloudctl.yaml` or `~/.cloudctl.yaml`
-3. `./cloudctl.yaml` or `~/.cloudctl.yaml`
+3. `./cloudctl.yaml` or `~/cloudctl.yaml`
 4. `$XDG_CONFIG_HOME/cloudctl/cloudctl.yaml` or `$XDG_CONFIG_HOME/cloudctl.yaml`
    (falls back to `~/.config/cloudctl/cloudctl.yaml` or `~/.config/cloudctl.yaml` when `$XDG_CONFIG_HOME` is unset)
 
@@ -138,6 +138,7 @@ cloudctl cluster-version [flags]
 Flags:
   -k, --kubeconfig   Path to kubeconfig file (default: ~/.kube/config)
   -c, --context      Context to query
+      --timeout      Maximum time to wait for the API server (default: 10s)
 ```
 
 ### `version`
