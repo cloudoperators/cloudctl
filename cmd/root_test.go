@@ -69,6 +69,7 @@ func TestEnvKeyReplacerDashToUnderscore(t *testing.T) {
 	const testValue = "/tmp/test-kubeconfig"
 
 	t.Setenv(envKey, testValue)
+	t.Setenv("HOME", t.TempDir())
 	t.Cleanup(func() { viper.Reset() })
 
 	g.Expect(setupConfig()).To(BeNil())
