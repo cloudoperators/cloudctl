@@ -17,7 +17,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"k8s.io/apimachinery/pkg/version"
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	clientcmd "k8s.io/client-go/tools/clientcmd"
 
@@ -93,12 +92,7 @@ func runClusterVersion(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("no authentication methods found in your kubeconfig. please authenticate (`kubelogin`, etc.) and try again")
 		}
 
-		cfg.Timeout = timeout
-		clientset, cerr := kubernetes.NewForConfig(cfg)
-		if cerr != nil {
-			return fmt.Errorf("failed to create client: %w", cerr)
-		}
-		ver, err = clientset.Discovery().ServerVersion()
+		ver, err = getAuthenticatedVersion(ctx, cfg)
 		if err != nil {
 			return fmt.Errorf("authenticated version fetch failed: %w", err)
 		}
@@ -140,6 +134,35 @@ func hasAuth(cfg *rest.Config) bool {
 		}
 	}
 	return false
+}
+
+// getAuthenticatedVersion fetches the server version using a fully-authenticated
+// REST client. The provided context controls cancellation and deadline.
+func getAuthenticatedVersion(ctx context.Context, cfg *rest.Config) (*version.Info, error) {
+	// Build a transport with credentials from cfg so the request is authenticated.
+	transport, err := rest.TransportFor(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build authenticated transport: %w", err)
+	}
+	client := &http.Client{Transport: transport}
+	url := strings.TrimRight(cfg.Host, "/") + "/version"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected HTTP status: %s", resp.Status)
+	}
+	var v version.Info
+	if err := json.NewDecoder(resp.Body).Decode(&v); err != nil {
+		return nil, err
+	}
+	return &v, nil
 }
 
 // getUnauthenticatedVersion does a direct HTTP GET to /version using the same
