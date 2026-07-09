@@ -45,7 +45,7 @@ Use --short to print only the version number (useful in shell scripts):
 		}
 
 		if viper.GetBool("short") {
-			fmt.Println(info.Version)
+			fmt.Fprintln(cmd.OutOrStdout(), info.Version)
 			return nil
 		}
 

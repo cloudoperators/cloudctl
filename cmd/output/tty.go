@@ -15,7 +15,7 @@ func IsTTY() bool {
 	return IsTTYWriter(os.Stdout)
 }
 
-// IsTTYWriter returns true when w is os.Stdout and that file descriptor is a
+// IsTTYWriter returns true when w is an *os.File whose file descriptor is a
 // real terminal. Use this instead of IsTTY() when the writer may have been
 // redirected (e.g. cmd.OutOrStdout()).
 func IsTTYWriter(w io.Writer) bool {

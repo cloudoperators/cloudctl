@@ -35,6 +35,8 @@ func TestE2E_ClusterVersion(t *testing.T) {
 		if out == "" {
 			return fmt.Errorf("empty cluster-version output")
 		}
+		// Strip the "Kubernetes version: " label produced by the plain-text printer.
+		out = strings.TrimPrefix(out, "Kubernetes version: ")
 		if !re.MatchString(out) {
 			return fmt.Errorf("unexpected version format: %q", out)
 		}

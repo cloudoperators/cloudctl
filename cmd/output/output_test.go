@@ -51,10 +51,8 @@ func TestParseFormat_Invalid(t *testing.T) {
 
 func TestJSONPrinter_SyncResult(t *testing.T) {
 	g := NewWithT(t)
-	p := output.New(output.FormatJSON, false, new(bytes.Buffer))
-
 	var buf bytes.Buffer
-	p2 := output.New(output.FormatJSON, false, &buf)
+	p := output.New(output.FormatJSON, false, &buf)
 	result := output.SyncResult{
 		Clusters: []output.ClusterSyncResult{
 			{Name: "a", Context: "ctx-a", Status: output.ClusterSyncStatusSynced},
@@ -64,8 +62,7 @@ func TestJSONPrinter_SyncResult(t *testing.T) {
 		Skipped: 1,
 		Failed:  0,
 	}
-	g.Expect(p2.Print(result)).To(Succeed())
-	_ = p // satisfy linter
+	g.Expect(p.Print(result)).To(Succeed())
 
 	var got output.SyncResult
 	g.Expect(json.Unmarshal(buf.Bytes(), &got)).To(Succeed())

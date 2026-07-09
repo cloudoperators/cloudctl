@@ -208,6 +208,7 @@ func runSync(cmd *cobra.Command, args []string) error {
 	}
 
 	if writeErr := writeConfig(localConfig, remoteClusterKubeconfig); writeErr != nil {
+		_ = printer.Print(buildFailedSyncResult(ready, notReady, writeErr))
 		return fmt.Errorf("failed to write merged kubeconfig: %w", writeErr)
 	}
 
@@ -241,7 +242,7 @@ func buildSyncResult(ready, notReady []v1alpha1.ClusterKubeconfig) output.SyncRe
 	for _, ckc := range ready {
 		ctxName := ""
 		if len(ckc.Spec.Kubeconfig.Contexts) > 0 {
-			ctxName = ckc.Spec.Kubeconfig.Contexts[0].Name
+			ctxName = managedNameFunc(ckc.Spec.Kubeconfig.Contexts[0].Name)
 		}
 		result.Clusters = append(result.Clusters, output.ClusterSyncResult{
 			Name:    ckc.Name,
@@ -253,7 +254,7 @@ func buildSyncResult(ready, notReady []v1alpha1.ClusterKubeconfig) output.SyncRe
 	for _, ckc := range notReady {
 		ctxName := ""
 		if len(ckc.Spec.Kubeconfig.Contexts) > 0 {
-			ctxName = ckc.Spec.Kubeconfig.Contexts[0].Name
+			ctxName = managedNameFunc(ckc.Spec.Kubeconfig.Contexts[0].Name)
 		}
 		result.Clusters = append(result.Clusters, output.ClusterSyncResult{
 			Name:    ckc.Name,
@@ -277,7 +278,7 @@ func buildFailedSyncResult(ready, notReady []v1alpha1.ClusterKubeconfig, mergeEr
 	for _, ckc := range ready {
 		ctxName := ""
 		if len(ckc.Spec.Kubeconfig.Contexts) > 0 {
-			ctxName = ckc.Spec.Kubeconfig.Contexts[0].Name
+			ctxName = managedNameFunc(ckc.Spec.Kubeconfig.Contexts[0].Name)
 		}
 		result.Clusters = append(result.Clusters, output.ClusterSyncResult{
 			Name:    ckc.Name,
@@ -290,7 +291,7 @@ func buildFailedSyncResult(ready, notReady []v1alpha1.ClusterKubeconfig, mergeEr
 	for _, ckc := range notReady {
 		ctxName := ""
 		if len(ckc.Spec.Kubeconfig.Contexts) > 0 {
-			ctxName = ckc.Spec.Kubeconfig.Contexts[0].Name
+			ctxName = managedNameFunc(ckc.Spec.Kubeconfig.Contexts[0].Name)
 		}
 		result.Clusters = append(result.Clusters, output.ClusterSyncResult{
 			Name:    ckc.Name,
