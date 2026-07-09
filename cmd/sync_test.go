@@ -5,6 +5,7 @@ package cmd
 
 import (
 	"bytes"
+	"os"
 	"testing"
 
 	greenhousemetav1alpha1 "github.com/cloudoperators/greenhouse/api/meta/v1alpha1"
@@ -210,13 +211,38 @@ func TestFilterReady_EmptyAndNoneReady(t *testing.T) {
 
 // ---- New tests for exec-plugin flags and helpers ----
 
+func TestValidateAuthType(t *testing.T) {
+	g := NewWithT(t)
+
+	// auth-provider is always valid, no binary lookup needed
+	g.Expect(validateAuthType("auth-provider", "nonexistent-binary")).To(BeNil())
+	g.Expect(validateAuthType("Auth-Provider", "nonexistent-binary")).To(BeNil())
+
+	// exec-plugin with a real binary succeeds; use os.Executable() so the test
+	// is independent of PATH (the test binary is always resolvable).
+	self, err := os.Executable()
+	g.Expect(err).ToNot(HaveOccurred())
+	g.Expect(validateAuthType("exec-plugin", self)).To(BeNil())
+
+	// exec-plugin with a missing binary fails with a helpful message
+	err = validateAuthType("exec-plugin", "nonexistent-kubelogin-binary")
+	g.Expect(err).To(HaveOccurred())
+	g.Expect(err.Error()).To(ContainSubstring("--kubelogin-path"))
+	g.Expect(err.Error()).To(ContainSubstring("--auth-type=auth-provider"))
+
+	// unknown value is rejected
+	err = validateAuthType("bad-value", "")
+	g.Expect(err).To(HaveOccurred())
+	g.Expect(err.Error()).To(ContainSubstring("invalid --auth-type"))
+}
+
 func TestSyncFlags_AuthTypeAndKubeloginDefaults(t *testing.T) {
 	g := NewWithT(t)
 
 	// Ensure flags are registered on syncCmd with correct defaults
 	fAuthType := syncCmd.Flags().Lookup("auth-type")
 	g.Expect(fAuthType).ToNot(BeNil())
-	g.Expect(fAuthType.DefValue).To(Equal("auth-provider"))
+	g.Expect(fAuthType.DefValue).To(Equal("exec-plugin"))
 
 	fPath := syncCmd.Flags().Lookup("kubelogin-path")
 	g.Expect(fPath).ToNot(BeNil())
