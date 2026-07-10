@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	greenhousemetav1alpha1 "github.com/cloudoperators/greenhouse/api/meta/v1alpha1"
@@ -497,11 +498,18 @@ func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdap
 
 		// Build a reverse lookup of unmanaged local auth entries so we can reuse their names
 		// instead of creating new cloudctl:auth-<hash> entries.
-		existingLocalKeys := make(map[string]string) // authInfoKey → local name
+		// Collect all names per key first, then pick the lexicographically smallest to ensure
+		// deterministic reuse when multiple unmanaged entries share the same key.
+		keyToNames := make(map[string][]string)
 		for localName, localAuth := range localConfig.AuthInfos {
 			if !isManaged(localName) {
-				existingLocalKeys[generateAuthInfoKey(localAuth)] = localName
+				key := generateAuthInfoKey(localAuth)
+				keyToNames[key] = append(keyToNames[key], localName)
 			}
+		}
+		existingLocalKeys := make(map[string]string, len(keyToNames)) // authInfoKey → local name
+		for key, names := range keyToNames {
+			existingLocalKeys[key] = slices.Min(names)
 		}
 
 		// Merge AuthInfos
