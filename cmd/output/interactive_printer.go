@@ -244,6 +244,8 @@ func (p *interactivePrinter) printDryRunDiff(w func(string, ...any), r SyncDryRu
 			for _, f := range a.Fields {
 				if f.Field == "Credentials" {
 					w("  %s %-12s  %s\n", styleYellow.Render("~"), "credentials:", styleYellow.Render("changed"))
+				} else if f.Old == f.New {
+					w("  %s %-12s  %s\n", styleYellow.Render("~"), strings.ToLower(f.Field)+":", styleYellow.Render("changed"))
 				} else {
 					label := strings.ToLower(f.Field) + ":"
 					if f.Old != "" {

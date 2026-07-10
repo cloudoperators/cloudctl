@@ -121,6 +121,9 @@ func (p *plainPrinter) printDryRunDiff(w func(string, ...any), t SyncDryRunResul
 			for _, f := range a.Fields {
 				if f.Field == "Credentials" {
 					w("  ~ credentials:  changed\n")
+				} else if f.Old == f.New {
+					// Both sides redacted to the same string — show as a generic change.
+					w("  ~ %-12s  changed\n", strings.ToLower(f.Field)+":")
 				} else {
 					label := strings.ToLower(f.Field) + ":"
 					if f.Old != "" {
@@ -176,20 +179,48 @@ func accessChangeSummary(a AccessDiff) string {
 	return strings.Join(parts, ", ")
 }
 
-// modifiedBreakdown counts distinct change reasons across all modified accesses
-// and returns them as sorted "N reason" strings (e.g. ["45 credentials", "129 config"]).
+// modifiedBreakdown counts individual change categories across all modified
+// accesses and returns them as sorted "N reason" strings
+// (e.g. ["45 credentials", "1 server"]).
+// A single access entry can contribute to multiple categories.
 func modifiedBreakdown(accesses []AccessDiff) []string {
 	counts := make(map[string]int)
 	for _, a := range accesses {
 		if a.ChangeType != "modified" {
 			continue
 		}
-		counts[accessChangeSummary(a)]++
+		// Count each category at most once per access entry.
+		seen := make(map[string]struct{})
+		for _, f := range a.Fields {
+			var cat string
+			switch {
+			case f.Field == "Credentials":
+				cat = "credentials"
+			case f.Field == "Server":
+				cat = "server"
+			case f.Field == "CA":
+				cat = "ca"
+			case f.Field == "Labels":
+				cat = "labels"
+			case f.Field == "Exec Args" || f.Field == "Auth type":
+				cat = "credentials"
+			case strings.HasPrefix(f.Field, "auth-provider."):
+				cat = "credentials"
+			default:
+				cat = "config"
+			}
+			if _, already := seen[cat]; !already {
+				seen[cat] = struct{}{}
+				counts[cat]++
+			}
+		}
+		if len(a.Fields) == 0 {
+			counts["config"]++
+		}
 	}
 	if len(counts) == 0 {
 		return nil
 	}
-	// Collect keys and sort for deterministic output.
 	keys := make([]string, 0, len(counts))
 	for k := range counts {
 		keys = append(keys, k)
