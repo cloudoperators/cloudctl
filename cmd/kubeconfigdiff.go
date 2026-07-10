@@ -307,8 +307,12 @@ func argsDiff(oldArgs, newArgs []string) []FieldDiff {
 
 	var diffs []FieldDiff
 	// Emit paired sensitive changes as a single modified entry.
-	for pfx := range pairedPrefixes {
-		diffs = append(diffs, FieldDiff{Field: "Exec Args", Old: pfx + "<redacted>", New: pfx + "<redacted>"})
+	// Iterate over sensitiveArgPrefixes (ordered slice) rather than the map to
+	// keep output order deterministic regardless of how many prefixes match.
+	for _, pfx := range sensitiveArgPrefixes {
+		if pairedPrefixes[pfx] {
+			diffs = append(diffs, FieldDiff{Field: "Exec Args", Old: pfx + "<redacted>", New: pfx + "<redacted>"})
+		}
 	}
 	for _, r := range removed {
 		isPaired := false
@@ -375,8 +379,7 @@ func toOutputDiffEntries(diffs []EntryDiff) []output.DiffEntry {
 func buildAccessDiffs(diff KubeconfigDiff, oldCfg, newCfg *clientcmdapi.Config) []output.AccessDiff {
 	// accesses keyed by context name to allow merging
 	type accessEntry struct {
-		access  output.AccessDiff
-		fromCtx bool // originated from a context-level diff
+		access output.AccessDiff
 	}
 	byName := make(map[string]*accessEntry)
 
@@ -388,7 +391,6 @@ func buildAccessDiffs(diff KubeconfigDiff, oldCfg, newCfg *clientcmdapi.Config) 
 				Name:       name,
 				ChangeType: string(ctxDiff.ChangeType),
 			},
-			fromCtx: true,
 		}
 
 		switch ctxDiff.ChangeType {

@@ -523,9 +523,9 @@ func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdap
 				localAuth := localConfig.AuthInfos[localName]
 				if authInfoEqual(localAuth, serverAuth) {
 					slog.Debug("reusing existing local authinfo", "name", localName, "server", serverName)
-					// Merge server config into the local entry to pick up any server-side
-					// changes while preserving local tokens.
-					localConfig.AuthInfos[localName] = mergeAuthInfo(serverAuth, localAuth)
+					// Credentials are identical — leave the unmanaged local entry untouched
+					// to preserve any local-only fields (Token, TokenFile, Impersonate, etc.)
+					// that are outside authInfoEqual's comparison scope.
 					authInfoMap[uniqueKey] = localName
 					continue
 				}

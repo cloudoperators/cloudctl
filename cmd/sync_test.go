@@ -846,7 +846,7 @@ func TestDiffKubeconfig_UnmanagedEntriesIgnored(t *testing.T) {
 	g.Expect(diff.AuthInfos).To(BeEmpty())
 }
 
-func TestRunSync_DryRun_NoWrite(t *testing.T) {
+func TestDryRun_MergeAndDiff_NoWrite(t *testing.T) {
 	g := NewWithT(t)
 
 	orig := prefix
