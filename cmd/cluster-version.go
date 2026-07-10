@@ -197,7 +197,11 @@ func getUnauthenticatedVersion(ctx context.Context, cfg *rest.Config) (*version.
 		tlsCfg.RootCAs = pool
 	}
 
-	client := &http.Client{Transport: &http.Transport{TLSClientConfig: tlsCfg}}
+	// Clone the default transport so proxy settings, dial/keepalive defaults,
+	// and HTTP/2 support are preserved; only override TLS configuration.
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.TLSClientConfig = tlsCfg
+	client := &http.Client{Transport: transport}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
