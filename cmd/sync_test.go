@@ -5,7 +5,9 @@ package cmd
 
 import (
 	"bytes"
+	"errors"
 	"os"
+	"path/filepath"
 	"testing"
 
 	greenhousemetav1alpha1 "github.com/cloudoperators/greenhouse/api/meta/v1alpha1"
@@ -13,6 +15,8 @@ import (
 	. "github.com/onsi/gomega"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
+
+	"github.com/cloudoperators/cloudctl/cmd/output"
 )
 
 // sync_merge_test.go
@@ -255,7 +259,94 @@ func TestSyncFlags_AuthTypeAndKubeloginDefaults(t *testing.T) {
 
 	fCache := syncCmd.Flags().Lookup("kubelogin-token-cache-dir")
 	g.Expect(fCache).ToNot(BeNil())
-	g.Expect(fCache.DefValue).To(Equal("$(HOME)/.kube/cache/oidc-login"))
+	home, err := os.UserHomeDir()
+	g.Expect(err).ToNot(HaveOccurred())
+	g.Expect(fCache.DefValue).To(Equal(filepath.Join(home, ".kube", "cache", "oidc-login")))
+}
+
+func makeCKC(name, contextName string) greenhousev1alpha1.ClusterKubeconfig {
+	ckc := greenhousev1alpha1.ClusterKubeconfig{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+	}
+	if contextName != "" {
+		ckc.Spec.Kubeconfig.Contexts = []greenhousev1alpha1.ClusterKubeconfigContextItem{
+			{Name: contextName},
+		}
+	}
+	return ckc
+}
+
+func TestBuildSyncResult(t *testing.T) {
+	g := NewWithT(t)
+
+	ready := []greenhousev1alpha1.ClusterKubeconfig{
+		makeCKC("cluster-a", "ctx-a"),
+		makeCKC("cluster-b", ""),
+	}
+	notReady := []greenhousev1alpha1.ClusterKubeconfig{
+		makeCKC("cluster-c", "ctx-c"),
+	}
+
+	result := buildSyncResult(ready, notReady)
+
+	g.Expect(result.Synced).To(Equal(2))
+	g.Expect(result.Skipped).To(Equal(1))
+	g.Expect(result.Failed).To(Equal(0))
+	g.Expect(result.Clusters).To(HaveLen(3))
+
+	// Ready cluster with context name
+	g.Expect(result.Clusters[0].Name).To(Equal("cluster-a"))
+	g.Expect(result.Clusters[0].Context).To(Equal("ctx-a"))
+	g.Expect(result.Clusters[0].Status).To(Equal(output.ClusterSyncStatusSynced))
+
+	// Ready cluster without context (empty kubeconfig)
+	g.Expect(result.Clusters[1].Name).To(Equal("cluster-b"))
+	g.Expect(result.Clusters[1].Context).To(Equal(""))
+
+	// Not-ready cluster
+	g.Expect(result.Clusters[2].Name).To(Equal("cluster-c"))
+	g.Expect(result.Clusters[2].Context).To(Equal("ctx-c"))
+	g.Expect(result.Clusters[2].Status).To(Equal(output.ClusterSyncStatusSkipped))
+	g.Expect(result.Clusters[2].Reason).To(Equal("not ready"))
+}
+
+func TestBuildSyncResult_Empty(t *testing.T) {
+	g := NewWithT(t)
+
+	result := buildSyncResult(nil, nil)
+	g.Expect(result.Synced).To(Equal(0))
+	g.Expect(result.Skipped).To(Equal(0))
+	g.Expect(result.Failed).To(Equal(0))
+	g.Expect(result.Clusters).ToNot(BeNil())
+	g.Expect(result.Clusters).To(BeEmpty())
+}
+
+func TestBuildFailedSyncResult(t *testing.T) {
+	g := NewWithT(t)
+
+	ready := []greenhousev1alpha1.ClusterKubeconfig{
+		makeCKC("cluster-a", "ctx-a"),
+	}
+	notReady := []greenhousev1alpha1.ClusterKubeconfig{
+		makeCKC("cluster-b", "ctx-b"),
+	}
+	reason := errors.New("merge failed: some error")
+
+	result := buildFailedSyncResult(ready, notReady, reason)
+
+	g.Expect(result.Synced).To(Equal(0))
+	g.Expect(result.Failed).To(Equal(1))
+	g.Expect(result.Skipped).To(Equal(1))
+	g.Expect(result.Clusters).To(HaveLen(2))
+
+	g.Expect(result.Clusters[0].Name).To(Equal("cluster-a"))
+	g.Expect(result.Clusters[0].Context).To(Equal("ctx-a"))
+	g.Expect(result.Clusters[0].Status).To(Equal(output.ClusterSyncStatusFailed))
+	g.Expect(result.Clusters[0].Reason).To(Equal("merge failed: some error"))
+
+	g.Expect(result.Clusters[1].Name).To(Equal("cluster-b"))
+	g.Expect(result.Clusters[1].Status).To(Equal(output.ClusterSyncStatusSkipped))
+	g.Expect(result.Clusters[1].Reason).To(Equal("not ready"))
 }
 
 func TestBuildKubeloginArgs_MappingAndExtras(t *testing.T) {

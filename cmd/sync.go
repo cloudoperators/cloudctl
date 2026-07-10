@@ -9,10 +9,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"maps"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -25,6 +26,8 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/cloudoperators/cloudctl/cmd/output"
 )
 
 var (
@@ -42,22 +45,33 @@ var (
 )
 
 func init() {
-	syncCmd.Flags().StringVarP(&greenhouseClusterKubeconfig, "greenhouse-cluster-kubeconfig", "k", clientcmd.RecommendedHomeFile, "kubeconfig file path for Greenhouse cluster")
-	syncCmd.Flags().StringVarP(&greenhouseClusterContext, "greenhouse-cluster-context", "c", "", "context in greenhouse-cluster-kubeconfig, the context in the file is used if this flag is not set")
-	syncCmd.Flags().StringVarP(&greenhouseClusterNamespace, "greenhouse-cluster-namespace", "n", "", "namespace for greenhouse-cluster-kubeconfig, it is the same value as Greenhouse organization")
+	syncCmd.Flags().StringVarP(&greenhouseClusterKubeconfig, "greenhouse-cluster-kubeconfig", "k", clientcmd.RecommendedHomeFile, "Path to the Greenhouse cluster kubeconfig")
+	syncCmd.Flags().StringVarP(&greenhouseClusterContext, "greenhouse-cluster-context", "c", "", "Context to use from the Greenhouse kubeconfig (defaults to current context)")
+	syncCmd.Flags().StringVarP(&greenhouseClusterNamespace, "greenhouse-cluster-namespace", "n", "", "Greenhouse organization namespace (required)")
 	if err := syncCmd.MarkFlagRequired("greenhouse-cluster-namespace"); err != nil {
 		panic(err)
 	}
-	syncCmd.Flags().StringVarP(&remoteClusterKubeconfig, "remote-cluster-kubeconfig", "r", clientcmd.RecommendedHomeFile, "kubeconfig file path for remote clusters")
-	syncCmd.Flags().StringVar(&remoteClusterName, "remote-cluster-name", "", "name of the remote cluster, if not set all clusters are retrieved")
-	syncCmd.Flags().StringVar(&prefix, "prefix", "cloudctl", "prefix for kubeconfig entries. it is used to separate and manage the entries of this tool only")
-	syncCmd.Flags().BoolVar(&mergeIdenticalUsers, "merge-identical-users", true, "merge identical user information in kubeconfig file so that you only login once for the clusters that share the same auth info")
+	syncCmd.Flags().StringVarP(&remoteClusterKubeconfig, "remote-cluster-kubeconfig", "r", clientcmd.RecommendedHomeFile, "Local kubeconfig file to merge into")
+	syncCmd.Flags().StringVar(&remoteClusterName, "remote-cluster-name", "", "Sync only this cluster by name (default: all ready clusters)")
+	syncCmd.Flags().StringVar(&prefix, "prefix", "cloudctl", "Prefix applied to managed kubeconfig entries to avoid collisions")
+	syncCmd.Flags().BoolVar(&mergeIdenticalUsers, "merge-identical-users", true, "Deduplicate auth entries that share the same OIDC config (single login for all such clusters)")
 
-	// Authentication output style flags
-	syncCmd.Flags().StringVar(&authType, "auth-type", "exec-plugin", "authentication config style to write for users: auth-provider or exec-plugin")
-	syncCmd.Flags().StringVar(&kubeloginPath, "kubelogin-path", "kubelogin", "path to kubelogin command when using exec-plugin auth-type")
-	syncCmd.Flags().StringSliceVar(&kubeloginExtraArgs, "kubelogin-extra-args", nil, "extra arguments to pass to kubelogin exec plugin")
-	syncCmd.Flags().StringVar(&kubeloginTokenCacheDir, "kubelogin-token-cache-dir", "$(HOME)/.kube/cache/oidc-login", "token cache directory for kubelogin")
+	// Authentication flags
+	syncCmd.Flags().StringVar(&authType, "auth-type", "exec-plugin", "Auth credential style: exec-plugin (kubelogin) or auth-provider (legacy)")
+	syncCmd.Flags().StringVar(&kubeloginPath, "kubelogin-path", "kubelogin", "Path to the kubelogin binary (used with --auth-type=exec-plugin)")
+	syncCmd.Flags().StringSliceVar(&kubeloginExtraArgs, "kubelogin-extra-args", nil, "Additional arguments passed to the kubelogin exec plugin")
+	defaultTokenCacheDir := os.Getenv("HOME")
+	if defaultTokenCacheDir == "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			defaultTokenCacheDir = home
+		}
+	}
+	if defaultTokenCacheDir != "" {
+		defaultTokenCacheDir = filepath.Join(defaultTokenCacheDir, ".kube", "cache", "oidc-login")
+	} else {
+		defaultTokenCacheDir = filepath.Join("~", ".kube", "cache", "oidc-login")
+	}
+	syncCmd.Flags().StringVar(&kubeloginTokenCacheDir, "kubelogin-token-cache-dir", defaultTokenCacheDir, "Directory for OIDC token cache files")
 
 	// BindPFlags can theroretically return an error if called with `nil` as an argument
 	// which should never happened after at least one flag was defined. That's why the output
@@ -67,8 +81,30 @@ func init() {
 
 var syncCmd = &cobra.Command{
 	Use:   "sync",
-	Short: "Fetches kubeconfigs of remote clusters from Greenhouse cluster and merges them into your local config",
-	RunE:  runSync,
+	Short: "Sync ClusterKubeconfigs from Greenhouse into your local kubeconfig",
+	Long: `Fetches ClusterKubeconfig resources from a Greenhouse cluster and merges
+them into your local kubeconfig file.
+
+Only clusters whose Ready condition is True are merged. Clusters that have
+been removed from Greenhouse are cleaned up from your local config. Existing
+non-managed entries are never touched.
+
+OIDC credentials are preserved across syncs: id-token and refresh-token are
+carried forward so you do not need to re-authenticate after every sync.
+
+Examples:
+  # Sync all clusters for an organization
+  cloudctl sync -n my-org
+
+  # Sync a single cluster
+  cloudctl sync -n my-org --remote-cluster-name prod-eu
+
+  # Use a dedicated Greenhouse kubeconfig and emit JSON output
+  cloudctl sync -n my-org -k ~/.kube/greenhouse.yaml -o json
+
+  # Debug mode — shows every cluster/authinfo/context decision on stderr
+  cloudctl sync -n my-org --log-level debug`,
+	RunE: runSync,
 }
 
 func runSync(cmd *cobra.Command, args []string) error {
@@ -85,6 +121,13 @@ func runSync(cmd *cobra.Command, args []string) error {
 	kubeloginExtraArgs = viper.GetStringSlice("kubelogin-extra-args")
 	kubeloginTokenCacheDir = viper.GetString("kubelogin-token-cache-dir")
 
+	format, err := output.ParseFormat(viper.GetString("output"))
+	if err != nil {
+		return err
+	}
+	w := cmd.OutOrStdout()
+	printer := output.New(format, output.IsTTYWriter(w), w)
+
 	if greenhouseClusterKubeconfig == "" {
 		return fmt.Errorf("greenhouse cluster kubeconfig path is empty")
 	}
@@ -99,7 +142,6 @@ func runSync(cmd *cobra.Command, args []string) error {
 
 	var (
 		centralConfig *rest.Config
-		err           error
 	)
 	if greenhouseClusterContext != "" {
 		centralConfig, err = configWithContext(greenhouseClusterContext, greenhouseClusterKubeconfig)
@@ -126,29 +168,33 @@ func runSync(cmd *cobra.Command, args []string) error {
 	}
 
 	ctx := cmd.Context()
-	var clusterKubeconfigs []v1alpha1.ClusterKubeconfig
+
+	stopFetch := printer.StartSpinner("Fetching cluster kubeconfigs...")
+	var allKubeconfigs []v1alpha1.ClusterKubeconfig
 
 	// If a specific remote cluster name is provided, fetch that single resource;
 	// otherwise, list all ClusterKubeconfigs in the given namespace.
 	if remoteClusterName != "" {
 		var ckc v1alpha1.ClusterKubeconfig
 		if err := c.Get(ctx, client.ObjectKey{Namespace: greenhouseClusterNamespace, Name: remoteClusterName}, &ckc); err != nil {
+			stopFetch()
 			return fmt.Errorf("failed to get ClusterKubeconfig %q: %w", remoteClusterName, err)
 		}
-		clusterKubeconfigs = append(clusterKubeconfigs, ckc)
+		allKubeconfigs = append(allKubeconfigs, ckc)
 	} else {
 		var list v1alpha1.ClusterKubeconfigList
 		if err := c.List(ctx, &list, client.InNamespace(greenhouseClusterNamespace)); err != nil {
+			stopFetch()
 			return fmt.Errorf("failed to list ClusterKubeconfigs: %w", err)
 		}
-		clusterKubeconfigs = list.Items
+		allKubeconfigs = list.Items
 	}
-	// Filter only Ready ClusterKubeconfigs
-	clusterKubeconfigs = filterReady(clusterKubeconfigs)
+	stopFetch()
 
-	if len(clusterKubeconfigs) == 0 {
-		log.Println("No ClusterKubeconfigs found to sync.")
-		return nil
+	ready, notReady := partitionReady(allKubeconfigs)
+
+	if len(ready) == 0 {
+		return printer.Print(buildSyncResult(nil, notReady))
 	}
 
 	localConfig, err := clientcmd.LoadFromFile(remoteClusterKubeconfig)
@@ -160,38 +206,117 @@ func runSync(cmd *cobra.Command, args []string) error {
 		localConfig = clientcmdapi.NewConfig()
 	}
 
-	serverConfig, err := buildIncomingKubeconfig(clusterKubeconfigs)
+	serverConfig, err := buildIncomingKubeconfig(ready)
 	if err != nil {
 		return fmt.Errorf("failed to create server config: %w", err)
 	}
 
+	stopMerge := printer.StartSpinner("Merging kubeconfigs...")
 	err = mergeKubeconfig(localConfig, serverConfig)
+	stopMerge()
 	if err != nil {
+		_ = printer.Print(buildFailedSyncResult(ready, notReady, err))
 		return fmt.Errorf(`failed to merge ClusterKubeconfig: %w`, err)
 	}
 
-	err = writeConfig(localConfig, remoteClusterKubeconfig)
-	if err != nil {
-		return fmt.Errorf("failed to write merged kubeconfig: %w", err)
+	if writeErr := writeConfig(localConfig, remoteClusterKubeconfig); writeErr != nil {
+		_ = printer.Print(buildFailedSyncResult(ready, notReady, writeErr))
+		return fmt.Errorf("failed to write merged kubeconfig: %w", writeErr)
 	}
 
-	log.Println("Successfully synced and merged into your local config.")
-	return nil
+	return printer.Print(buildSyncResult(ready, notReady))
 }
 
-// filterReady returns only ClusterKubeconfigs that have Ready condition set to True.
-func filterReady(items []v1alpha1.ClusterKubeconfig) []v1alpha1.ClusterKubeconfig {
-	if len(items) == 0 {
-		return items
-	}
-	eligible := make([]v1alpha1.ClusterKubeconfig, 0, len(items))
+// partitionReady splits ClusterKubeconfigs into ready and notReady slices.
+// Ready means the Ready condition is set to True.
+func partitionReady(items []v1alpha1.ClusterKubeconfig) (ready, notReady []v1alpha1.ClusterKubeconfig) {
 	for _, ckc := range items {
 		cond := ckc.Status.Conditions.GetConditionByType(greenhousemetav1alpha1.ReadyCondition)
 		if cond != nil && cond.IsTrue() {
-			eligible = append(eligible, ckc)
+			ready = append(ready, ckc)
+		} else {
+			notReady = append(notReady, ckc)
 		}
 	}
-	return eligible
+	return ready, notReady
+}
+
+// filterReady returns only ClusterKubeconfigs that have Ready condition set to True.
+// Deprecated: use partitionReady instead.
+func filterReady(items []v1alpha1.ClusterKubeconfig) []v1alpha1.ClusterKubeconfig {
+	ready, _ := partitionReady(items)
+	return ready
+}
+
+// buildSyncResult constructs an output.SyncResult from ready and notReady cluster lists.
+func buildSyncResult(ready, notReady []v1alpha1.ClusterKubeconfig) output.SyncResult {
+	result := output.SyncResult{}
+	for _, ckc := range ready {
+		ctxName := ""
+		if len(ckc.Spec.Kubeconfig.Contexts) > 0 {
+			ctxName = ckc.Spec.Kubeconfig.Contexts[0].Name
+		}
+		result.Clusters = append(result.Clusters, output.ClusterSyncResult{
+			Name:    ckc.Name,
+			Context: ctxName,
+			Status:  output.ClusterSyncStatusSynced,
+		})
+		result.Synced++
+	}
+	for _, ckc := range notReady {
+		ctxName := ""
+		if len(ckc.Spec.Kubeconfig.Contexts) > 0 {
+			ctxName = ckc.Spec.Kubeconfig.Contexts[0].Name
+		}
+		result.Clusters = append(result.Clusters, output.ClusterSyncResult{
+			Name:    ckc.Name,
+			Context: ctxName,
+			Status:  output.ClusterSyncStatusSkipped,
+			Reason:  "not ready",
+		})
+		result.Skipped++
+	}
+	if result.Clusters == nil {
+		result.Clusters = []output.ClusterSyncResult{}
+	}
+	return result
+}
+
+// buildFailedSyncResult is like buildSyncResult but marks all ready clusters as failed
+// with the given error as the reason. Used when either the merge or the kubeconfig write step fails.
+func buildFailedSyncResult(ready, notReady []v1alpha1.ClusterKubeconfig, reason error) output.SyncResult {
+	result := output.SyncResult{}
+	msg := reason.Error()
+	for _, ckc := range ready {
+		ctxName := ""
+		if len(ckc.Spec.Kubeconfig.Contexts) > 0 {
+			ctxName = ckc.Spec.Kubeconfig.Contexts[0].Name
+		}
+		result.Clusters = append(result.Clusters, output.ClusterSyncResult{
+			Name:    ckc.Name,
+			Context: ctxName,
+			Status:  output.ClusterSyncStatusFailed,
+			Reason:  msg,
+		})
+		result.Failed++
+	}
+	for _, ckc := range notReady {
+		ctxName := ""
+		if len(ckc.Spec.Kubeconfig.Contexts) > 0 {
+			ctxName = ckc.Spec.Kubeconfig.Contexts[0].Name
+		}
+		result.Clusters = append(result.Clusters, output.ClusterSyncResult{
+			Name:    ckc.Name,
+			Context: ctxName,
+			Status:  output.ClusterSyncStatusSkipped,
+			Reason:  "not ready",
+		})
+		result.Skipped++
+	}
+	if result.Clusters == nil {
+		result.Clusters = []output.ClusterSyncResult{}
+	}
+	return result
 }
 
 // buildIncomingKubeconfig converts the list of typed ClusterKubeconfig objects
@@ -446,13 +571,17 @@ func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdap
 		localCluster, exists := localConfig.Clusters[managedName]
 		if !exists {
 			// Add the managed cluster from serverConfig to localConfig
+			slog.Debug("adding cluster", "name", managedName)
 			localConfig.Clusters[managedName] = serverCluster
 		} else {
 			// Check if Server, CertificateAuthorityData or the labels extension has changed
 			if localCluster.Server != serverCluster.Server ||
 				!bytes.Equal(localCluster.CertificateAuthorityData, serverCluster.CertificateAuthorityData) ||
 				!labelsExtensionEqual(localCluster.Extensions, serverCluster.Extensions) {
+				slog.Debug("updating cluster", "name", managedName)
 				localConfig.Clusters[managedName] = serverCluster
+			} else {
+				slog.Debug("cluster unchanged", "name", managedName)
 			}
 		}
 	}
@@ -476,9 +605,11 @@ func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdap
 
 			// **Merge AuthInfo to preserve id-token and refresh-token**
 			if existingAuth, exists := localConfig.AuthInfos[managedAuthName]; exists {
+				slog.Debug("merging authinfo tokens", "name", managedAuthName, "server", serverName)
 				mergedAuth := mergeAuthInfo(serverAuth, existingAuth)
 				localConfig.AuthInfos[managedAuthName] = mergedAuth
 			} else {
+				slog.Debug("adding authinfo", "name", managedAuthName, "server", serverName)
 				localConfig.AuthInfos[managedAuthName] = serverAuth
 			}
 
@@ -488,10 +619,12 @@ func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdap
 			managedAuthName = managedNameFunc(serverName)
 			localAuth, exists := localConfig.AuthInfos[managedAuthName]
 			if !exists {
+				slog.Debug("adding authinfo", "name", managedAuthName)
 				localConfig.AuthInfos[managedAuthName] = serverAuth
 			} else {
 				if !authInfoEqual(localAuth, serverAuth) {
 					// **Merge AuthInfo to preserve id-token and refresh-token**
+					slog.Debug("updating authinfo", "name", managedAuthName)
 					mergedAuth := mergeAuthInfo(serverAuth, localAuth)
 					localConfig.AuthInfos[managedAuthName] = mergedAuth
 				}
@@ -537,12 +670,14 @@ func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdap
 		localCtx, exists := localConfig.Contexts[managedName]
 		if !exists {
 			// Add the managed Context from serverConfig to localConfig
+			slog.Debug("adding context", "name", managedName)
 			localConfig.Contexts[managedName] = serverCtxCopy
 		} else {
 			// Check if Cluster, AuthInfo, or Namespace has changed
 			if localCtx.Cluster != serverCtxCopy.Cluster ||
 				localCtx.AuthInfo != serverCtxCopy.AuthInfo ||
 				localCtx.Namespace != serverCtxCopy.Namespace {
+				slog.Debug("updating context", "name", managedName)
 				localConfig.Contexts[managedName] = serverCtxCopy
 			}
 		}
@@ -554,6 +689,7 @@ func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdap
 			// Derive the server-side name by stripping the prefix
 			serverName := unmanagedNameFunc(localName)
 			if _, exists := serverConfig.Clusters[serverName]; !exists {
+				slog.Debug("removing stale cluster", "name", localName)
 				delete(localConfig.Clusters, localName)
 			}
 		}
@@ -572,12 +708,14 @@ func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdap
 					}
 				}
 				if !found {
+					slog.Debug("removing stale authinfo", "name", localName)
 					delete(localConfig.AuthInfos, localName)
 				}
 			} else {
 				// Derive the server-side name by stripping the prefix
 				serverName := unmanagedNameFunc(localName)
 				if _, exists := serverConfig.AuthInfos[serverName]; !exists {
+					slog.Debug("removing stale authinfo", "name", localName)
 					delete(localConfig.AuthInfos, localName)
 				}
 			}
@@ -590,6 +728,7 @@ func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdap
 			// Derive the server-side name by stripping the prefix
 			serverName := unmanagedNameFunc(localName)
 			if _, exists := serverConfig.Contexts[serverName]; !exists {
+				slog.Debug("removing stale context", "name", localName)
 				delete(localConfig.Contexts, localName)
 			} else {
 				// Additionally, verify that the context's Cluster and AuthInfo are still managed
@@ -600,12 +739,14 @@ func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdap
 					serverAuthName := serverCtx.AuthInfo
 					serverAuth, exists := serverConfig.AuthInfos[serverAuthName]
 					if !exists {
+						slog.Debug("removing stale context (missing authinfo)", "name", localName)
 						delete(localConfig.Contexts, localName)
 						continue
 					}
 					uniqueKey := generateAuthInfoKey(serverAuth)
 					mappedName, exists := authInfoMap[uniqueKey]
 					if !exists {
+						slog.Debug("removing stale context (unmapped authinfo)", "name", localName)
 						delete(localConfig.Contexts, localName)
 						continue
 					}
@@ -615,6 +756,7 @@ func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdap
 				}
 
 				if localCtx.Cluster != expectedCluster || localCtx.AuthInfo != expectedAuthInfo {
+					slog.Debug("removing stale context (mismatched refs)", "name", localName)
 					delete(localConfig.Contexts, localName)
 				}
 			}

@@ -2,73 +2,168 @@
 
 # cloudctl
 
-Unified Kubernetes CLI for the cloud.
+**cloudctl** is a CLI for managing Kubernetes cluster access via [Greenhouse](https://github.com/cloudoperators/greenhouse). It keeps your local kubeconfig in sync with the clusters registered in your Greenhouse organization — so `kubectl` just works.
+
+## What it does
+
+- **Syncs kubeconfigs** — fetches `ClusterKubeconfig` resources from Greenhouse and merges them into your local `~/.kube/config`, handling OIDC token caching, deduplication, and prefix-based entry management
+- **Reports cluster versions** — queries the Kubernetes API version of any context, trying unauthenticated first for speed
+- **Structured output** — every command supports `--output text|json|yaml` for scripting and pipelines; interactive terminals get a spinner and a colour-coded table
+
+## Installation
+
+Download the latest binary from the [releases page](https://github.com/cloudoperators/cloudctl/releases), place it on your `PATH`, and make it executable:
+
+```sh
+# macOS / Linux
+curl -Lo cloudctl https://github.com/cloudoperators/cloudctl/releases/latest/download/cloudctl-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)
+chmod +x cloudctl
+sudo mv cloudctl /usr/local/bin/
+```
+
+Or build from source (requires Go 1.25+):
+
+```sh
+git clone https://github.com/cloudoperators/cloudctl.git
+cd cloudctl
+make install   # installs to $GOBIN
+```
+
+## Quick start
+
+```sh
+# Sync all clusters from a Greenhouse organization into your local kubeconfig
+cloudctl sync --greenhouse-cluster-namespace <org>
+
+# Sync a single cluster
+cloudctl sync -n <org> --remote-cluster-name <cluster>
+
+# Check the Kubernetes version of a context
+cloudctl cluster-version --context <context>
+
+# Print version info
+cloudctl version
+cloudctl version --output json   # machine-readable
+```
+
+## Output formats
+
+All commands accept `-o / --output`:
+
+| Value  | Description                                              |
+|--------|----------------------------------------------------------|
+| `text` | Human-readable (default). Interactive terminals get a spinner and styled table. |
+| `json` | Indented JSON — suitable for `jq` pipelines.             |
+| `yaml` | YAML — suitable for GitOps tooling.                      |
+
+```sh
+# Pipeline example
+cloudctl version -o json | python3 -m json.tool
+cloudctl sync -n <org> -o json | python3 -c "import sys,json; r=json.load(sys.stdin); print(r['synced'])"
+```
+
+## Logging
+
+Logs are written to **stderr** so they never pollute stdout pipelines. By default only `info`-level messages appear.
+
+| Flag           | Values                       | Default  |
+|----------------|------------------------------|----------|
+| `--log-level`  | `debug`, `info`, `warn`, `error` | `info` |
+| `--log-format` | `text`, `json`               | `text`   |
+
+```sh
+# Show debug logs while syncing
+cloudctl sync -n <org> --log-level debug
+
+# Structured JSON logs (useful in CI)
+cloudctl sync -n <org> --log-level info --log-format json 2>sync.log
+```
+
+## Configuration
+
+Every flag can be set via an environment variable (prefix `CLOUDCTL_`, dashes become underscores) or a config file.
+
+**Environment variable example:**
+```sh
+export CLOUDCTL_GREENHOUSE_CLUSTER_NAMESPACE=my-org
+cloudctl sync
+```
+
+**Config file** — searched in order, first match wins:
+
+1. Path given by `--config` or `$CLOUDCTL_CONFIG`
+2. `./.cloudctl.yaml` or `~/.cloudctl.yaml`
+3. `./cloudctl.yaml` or `~/cloudctl.yaml`
+4. `$XDG_CONFIG_HOME/cloudctl/cloudctl.yaml` or `$XDG_CONFIG_HOME/cloudctl.yaml`
+   (falls back to `~/.config/cloudctl/cloudctl.yaml` or `~/.config/cloudctl.yaml` when `$XDG_CONFIG_HOME` is unset)
+
+Example `~/.cloudctl.yaml`:
+```yaml
+greenhouse-cluster-namespace: my-org
+greenhouse-cluster-kubeconfig: /home/user/.kube/greenhouse.yaml
+auth-type: exec-plugin
+log-level: info
+```
+
+## Commands
+
+### `sync`
+
+Fetches `ClusterKubeconfig` resources from Greenhouse and merges them into your local kubeconfig.
 
 ```
-cloudctl is a command line interface that helps:
-    
-    1) Fetch and merge kubeconfigs from the central Greenhouse cluster into your local kubeconfig
-    2) Sync contexts and credentials for seamless kubectl usage
-    3) Inspect the Kubernetes version of a target cluster
-    4) Print the cloudctl version and build information
-
-Examples:
-  - Merge/refresh kubeconfigs from Greenhouse:
-      cloudctl sync
-
-  - Show Kubernetes version for a specific context:
-      cloudctl cluster-version --context my-cluster
-
-  - Show cloudctl version:
-      cloudctl version
-
-Usage:
-  cloudctl [command]
-
-Available Commands:
-  cluster-version Prints the cluster version of the context in kubeconfig
-  completion      Generate the autocompletion script for the specified shell
-  help            Help about any command
-  sync            Fetches kubeconfigs of remote clusters from Greenhouse cluster and merges them into your local config
-  version         Print the cloudctl version information
+cloudctl sync -n <org> [flags]
 
 Flags:
-  -h, --help   help for cloudctl
-
-Use "cloudctl [command] --help" for more information about a command.
+  -k, --greenhouse-cluster-kubeconfig   Path to Greenhouse cluster kubeconfig (default: ~/.kube/config)
+  -c, --greenhouse-cluster-context      Context inside the Greenhouse kubeconfig
+  -n, --greenhouse-cluster-namespace    Greenhouse organization namespace (required)
+  -r, --remote-cluster-kubeconfig       Local kubeconfig to merge into (default: ~/.kube/config)
+      --remote-cluster-name             Sync only this cluster (default: all ready clusters)
+      --prefix                          Prefix for managed kubeconfig entries (default: cloudctl)
+      --merge-identical-users           Share a single auth entry for clusters with identical OIDC config (default: true)
+      --auth-type                       auth-provider or exec-plugin (default: exec-plugin)
+      --kubelogin-path                  Path to kubelogin binary (default: kubelogin)
+      --kubelogin-extra-args            Extra flags passed to kubelogin
+      --kubelogin-token-cache-dir       OIDC token cache directory
 ```
 
-## Requirements and Setup
-Download the latest release from [here](https://github.com/cloudoperators/cloudctl/releases), move to a location in PATH and update file permissions.
+### `cluster-version`
 
-## Passing configuration options
-Configuration options for each command can be provided through command line parameters, environment variables (using `CLOUDCTL_` as a variable name prefix), and/or through configuration file.
-Configuration file location is searched in that order (first found takes precedence):
-* what is provided as a value for `--config` parameter
-* what is provided as a value for `$CLOUDCTL_CONFIG` environment variable
-* file paths:
-  * `./.cloudctl.yaml`
-  * `$HOME/.cloudctl.yaml`
-  * `./cloudctl.yaml`
-  * `$HOME/cloudctl.yaml`
-  * if `$XDG_CONFIG_HOME` is set:
-     * `$XDG_CONFIG_HOME/cloudctl/cloudctl.yaml`
-     * `$XDG_CONFIG_HOME/cloudctl.yaml`
-  * if not, finally falling back to:
-     * `$HOME/.config/cloudctl/cloudctl.yaml`
-     * `$HOME/.config/cloudctl.yaml`
+Queries the Kubernetes server version for a given kubeconfig context. Tries an unauthenticated request first; falls back to an authenticated one if needed.
+
+```
+cloudctl cluster-version [flags]
+
+Flags:
+  -k, --kubeconfig   Path to kubeconfig file (default: ~/.kube/config)
+  -c, --context      Context to query
+      --timeout      Maximum time to wait for the API server (default: 10s)
+```
+
+### `version`
+
+Prints cloudctl build information.
+
+```
+cloudctl version [flags]
+
+Flags:
+      --short   Print only the version number
+```
 
 ## Support, Feedback, Contributing
 
-This project is open to feature requests/suggestions, bug reports etc. via [GitHub issues](https://github.com/cloudoperators/cloudctl/issues). Contribution and feedback are encouraged and always welcome. For more information about how to contribute, the project structure, as well as additional contribution information, see our [Contribution Guidelines](CONTRIBUTING.md).
+This project is open to feature requests, bug reports, and contributions via [GitHub issues](https://github.com/cloudoperators/cloudctl/issues) and pull requests. See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ## Security / Disclosure
-If you find any bug that may be a security problem, please follow our instructions at [in our security policy](https://github.com/cloudoperators/cloudctl/security/policy) on how to report it. Please do not create GitHub issues for security-related doubts or problems.
+
+If you find a security issue, follow the instructions in our [security policy](https://github.com/cloudoperators/cloudctl/security/policy). Do not open GitHub issues for security-related problems.
 
 ## Code of Conduct
 
-We as members, contributors, and leaders pledge to make participation in our community a harassment-free experience for everyone. By participating in this project, you agree to abide by its [Code of Conduct](https://github.com/SAP/.github/blob/main/CODE_OF_CONDUCT.md) at all times.
+By participating in this project you agree to abide by the [SAP Open Source Code of Conduct](https://github.com/SAP/.github/blob/main/CODE_OF_CONDUCT.md).
 
 ## Licensing
 
-Copyright 2025 SAP SE or an SAP affiliate company and cloudctl contributors. Please see our [LICENSE](LICENSE) for copyright and license information. Detailed information including third-party components and their licensing/copyright information is available [via the REUSE tool](https://api.reuse.software/info/github.com/cloudoperators/cloudctl).
+Copyright 2025 SAP SE or an SAP affiliate company and cloudctl contributors. See [LICENSE](LICENSE) for details. Third-party licensing information is available via the [REUSE tool](https://api.reuse.software/info/github.com/cloudoperators/cloudctl).
