@@ -30,7 +30,7 @@ var clusterVersionCmd = &cobra.Command{
 
 An unauthenticated GET to /version is attempted first (faster, no token
 refresh required). If the server requires authentication, cloudctl falls
-back to the standard authenticated discovery endpoint.
+back to an authenticated GET to /version using the kubeconfig credentials.
 
 If the API server is unreachable the command exits after --timeout (default 10s).
 
@@ -174,6 +174,9 @@ func getUnauthenticatedVersion(ctx context.Context, cfg *rest.Config) (*version.
 	tlsCfg := &tls.Config{}
 	if cfg.Insecure {
 		tlsCfg.InsecureSkipVerify = true // #nosec G402 — user explicitly opted in
+	}
+	if cfg.TLSClientConfig.ServerName != "" {
+		tlsCfg.ServerName = cfg.TLSClientConfig.ServerName
 	}
 
 	if len(cfg.CAData) > 0 {
