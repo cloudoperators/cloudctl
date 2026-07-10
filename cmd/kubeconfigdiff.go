@@ -360,29 +360,78 @@ func buildAccessDiffs(diff KubeconfigDiff, oldCfg, newCfg *clientcmdapi.Config) 
 		case DiffChangeModified:
 			oldCtx := oldCfg.Contexts[name]
 			newCtx := newCfg.Contexts[name]
-			if oldCtx != nil && newCtx != nil {
-				oldCluster := oldCfg.Clusters[oldCtx.Cluster]
-				newCluster := newCfg.Clusters[newCtx.Cluster]
-				oldServer, newServer := "", ""
-				if oldCluster != nil {
-					oldServer = oldCluster.Server
+			if oldCtx == nil || newCtx == nil {
+				break
+			}
+			// Server URL change (resolve through cluster refs)
+			oldCluster := oldCfg.Clusters[oldCtx.Cluster]
+			newCluster := newCfg.Clusters[newCtx.Cluster]
+			oldServer, newServer := "", ""
+			if oldCluster != nil {
+				oldServer = oldCluster.Server
+			}
+			if newCluster != nil {
+				newServer = newCluster.Server
+			}
+			if oldServer != newServer {
+				entry.access.Fields = append(entry.access.Fields, output.FieldChange{
+					Field: "Server",
+					Old:   oldServer,
+					New:   newServer,
+				})
+			}
+			// Carry through any credential field diffs from the authinfo diff
+			// (exec args, auth-provider config). If the auth objects are simply
+			// absent or unequal with no specific fields, fall back to the
+			// generic sentinel.
+			oldAuth := oldCfg.AuthInfos[oldCtx.AuthInfo]
+			newAuth := newCfg.AuthInfos[newCtx.AuthInfo]
+			credChanged := (oldAuth != nil && newAuth != nil && !authInfoEqual(oldAuth, newAuth)) ||
+				(oldAuth == nil) != (newAuth == nil)
+			if credChanged {
+				// Try to produce specific field-level diffs by comparing the
+				// auth objects directly, the same way diffAuthInfos does.
+				var authFields []output.FieldChange
+				if oldAuth != nil && newAuth != nil {
+					if newAuth.Exec != nil && oldAuth.Exec != nil {
+						for _, fd := range argsDiff(oldAuth.Exec.Args, newAuth.Exec.Args) {
+							authFields = append(authFields, output.FieldChange{
+								Field: fd.Field,
+								Old:   fd.Old,
+								New:   fd.New,
+							})
+						}
+					} else if newAuth.Exec != nil && oldAuth.Exec == nil {
+						authFields = append(authFields, output.FieldChange{Field: "Auth type", Old: "auth-provider", New: "exec-plugin"})
+					} else if newAuth.Exec == nil && oldAuth.Exec != nil {
+						authFields = append(authFields, output.FieldChange{Field: "Auth type", Old: "exec-plugin", New: "auth-provider"})
+					}
+					if newAuth.AuthProvider != nil && oldAuth.AuthProvider != nil {
+						oldFiltered := filterAuthProviderConfig(oldAuth.AuthProvider.Config)
+						newFiltered := filterAuthProviderConfig(newAuth.AuthProvider.Config)
+						for _, k := range sortedKeys(oldFiltered, newFiltered) {
+							ov, nv := oldFiltered[k], newFiltered[k]
+							if ov != nv {
+								if sensitiveAuthProviderKeys[k] {
+									ov, nv = "<redacted>", "<redacted>"
+								}
+								authFields = append(authFields, output.FieldChange{
+									Field: fmt.Sprintf("auth-provider.%s", k),
+									Old:   ov,
+									New:   nv,
+								})
+							}
+						}
+					}
 				}
-				if newCluster != nil {
-					newServer = newCluster.Server
-				}
-				if oldServer != newServer {
+				if len(authFields) > 0 {
+					entry.access.Fields = append(entry.access.Fields, authFields...)
+				} else {
 					entry.access.Fields = append(entry.access.Fields, output.FieldChange{
-						Field: "Server",
-						Old:   oldServer,
-						New:   newServer,
+						Field: "Credentials",
+						Old:   "changed",
+						New:   "",
 					})
-				}
-				// Check if credentials changed
-				oldAuth := oldCfg.AuthInfos[oldCtx.AuthInfo]
-				newAuth := newCfg.AuthInfos[newCtx.AuthInfo]
-				if (oldAuth != nil && newAuth != nil && !authInfoEqual(oldAuth, newAuth)) ||
-					(oldAuth == nil) != (newAuth == nil) {
-					entry.access.Fields = append(entry.access.Fields, output.FieldChange{Field: "Credentials", Old: "changed", New: ""})
 				}
 			}
 		}
@@ -435,12 +484,13 @@ func buildAccessDiffs(diff KubeconfigDiff, oldCfg, newCfg *clientcmdapi.Config) 
 	}
 
 	// 3. For each modified authinfo, find contexts in newCfg that reference it.
-	// If those contexts were not already captured above, emit a "modified" access
-	// entry with Credentials: changed so credential-only syncs are not silent.
-	modifiedAuthInfos := make(map[string]struct{}, len(diff.AuthInfos))
+	// Carry the actual field diffs (exec args, auth-provider config) through so
+	// diff format can show real old/new values. Fall back to a generic
+	// "Credentials: changed" entry only when no specific fields were identified.
+	modifiedAuthInfos := make(map[string]EntryDiff, len(diff.AuthInfos))
 	for _, ad := range diff.AuthInfos {
 		if ad.ChangeType == DiffChangeModified {
-			modifiedAuthInfos[ad.Name] = struct{}{}
+			modifiedAuthInfos[ad.Name] = ad
 		}
 	}
 	if len(modifiedAuthInfos) > 0 {
@@ -448,14 +498,27 @@ func buildAccessDiffs(diff KubeconfigDiff, oldCfg, newCfg *clientcmdapi.Config) 
 			if _, alreadyHandled := byName[ctxName]; alreadyHandled {
 				continue
 			}
-			if _, affected := modifiedAuthInfos[ctx.AuthInfo]; !affected {
+			ad, affected := modifiedAuthInfos[ctx.AuthInfo]
+			if !affected {
 				continue
+			}
+			var fields []output.FieldChange
+			for _, f := range ad.Fields {
+				fields = append(fields, output.FieldChange{
+					Field: f.Field,
+					Old:   f.Old,
+					New:   f.New,
+				})
+			}
+			if len(fields) == 0 {
+				// authInfoEqual returned false but no specific fields were identified.
+				fields = []output.FieldChange{{Field: "Credentials", Old: "changed", New: ""}}
 			}
 			byName[ctxName] = &accessEntry{
 				access: output.AccessDiff{
 					Name:       ctxName,
 					ChangeType: string(DiffChangeModified),
-					Fields:     []output.FieldChange{{Field: "Credentials", Old: "changed", New: ""}},
+					Fields:     fields,
 				},
 			}
 		}
@@ -514,4 +577,21 @@ func buildDryRunResult(diff KubeconfigDiff, oldCfg, newCfg *clientcmdapi.Config)
 		Removed:   removed,
 		Modified:  modified,
 	}
+}
+
+// sortedKeys returns the union of keys from two string maps, sorted.
+func sortedKeys(a, b map[string]string) []string {
+	seen := make(map[string]struct{}, len(a)+len(b))
+	for k := range a {
+		seen[k] = struct{}{}
+	}
+	for k := range b {
+		seen[k] = struct{}{}
+	}
+	keys := make([]string, 0, len(seen))
+	for k := range seen {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }

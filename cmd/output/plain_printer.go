@@ -206,7 +206,8 @@ func (p *plainPrinter) printDryRunDiff(w func(string, ...any), t SyncDryRunResul
 }
 
 // hasDetailFields returns true when the access diff contains at least one
-// non-Credentials field that has old/new values worth printing inline.
+// field that has old/new values worth printing inline (excludes the synthetic
+// Credentials sentinel which carries no real values).
 func hasDetailFields(a AccessDiff) bool {
 	for _, f := range a.Fields {
 		if f.Field != "Credentials" && (f.Old != "" || f.New != "") {
@@ -232,15 +233,19 @@ func accessChangeSummary(a AccessDiff) string {
 	}
 	seen := make(map[string]struct{}, len(a.Fields))
 	for _, f := range a.Fields {
-		switch f.Field {
-		case "Credentials":
+		switch {
+		case f.Field == "Credentials":
 			seen["credentials"] = struct{}{}
-		case "Server":
+		case f.Field == "Server":
 			seen["server"] = struct{}{}
-		case "CA":
+		case f.Field == "CA":
 			seen["ca"] = struct{}{}
-		case "Labels":
+		case f.Field == "Labels":
 			seen["labels"] = struct{}{}
+		case f.Field == "Exec Args" || f.Field == "Auth type":
+			seen["credentials"] = struct{}{}
+		case strings.HasPrefix(f.Field, "auth-provider."):
+			seen["credentials"] = struct{}{}
 		default:
 			seen["config"] = struct{}{}
 		}
