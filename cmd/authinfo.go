@@ -129,7 +129,8 @@ func generateAuthInfoKey(authInfo *clientcmdapi.AuthInfo) string {
 			envParts = append(envParts, e.Name+"="+e.Value)
 		}
 		sort.Strings(envParts)
-		data := fmt.Sprintf("exec:issuer:%s;client-id:%s;client-secret:%s;extra-params:%s;scopes:%s;env:%s",
+		data := fmt.Sprintf("exec:cmd:%s;api:%s;mode:%s;issuer:%s;client-id:%s;client-secret:%s;extra-params:%s;scopes:%s;env:%s",
+			authInfo.Exec.Command, authInfo.Exec.APIVersion, authInfo.Exec.InteractiveMode,
 			issuer, clientID, clientSecret, extraParams, strings.Join(scopes, ","), strings.Join(envParts, ","))
 		return data
 	}
@@ -151,9 +152,10 @@ func generateAuthInfoKey(authInfo *clientcmdapi.AuthInfo) string {
 	authRequestExtraParams := authInfo.AuthProvider.Config["auth-request-extra-params"]
 	extraScopes := authInfo.AuthProvider.Config["extra-scopes"]
 
-	// Concatenate the fields in a consistent order
-	data := fmt.Sprintf("idp-issuer-url:%s;client-id:%s;client-secret:%s;auth-request-extra-params:%s;extra-scopes:%s",
-		issuerURL, clientID, clientSecret, authRequestExtraParams, extraScopes)
+	// Concatenate the fields in a consistent order, including the provider name
+	// to prevent collisions between different auth-provider types.
+	data := fmt.Sprintf("name:%s;idp-issuer-url:%s;client-id:%s;client-secret:%s;auth-request-extra-params:%s;extra-scopes:%s",
+		authInfo.AuthProvider.Name, issuerURL, clientID, clientSecret, authRequestExtraParams, extraScopes)
 
 	return data
 }

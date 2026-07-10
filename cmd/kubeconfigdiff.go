@@ -258,6 +258,8 @@ func redactArg(arg string) string {
 // argsDiff computes per-argument differences between two exec arg lists, returning
 // FieldDiff entries for args that appear only in old (removed) or only in new (added).
 // Values of sensitive flags (e.g. --oidc-client-secret=) are redacted.
+// When a sensitive flag appears in both removed and added (value changed), a single
+// entry with Old and New both set to "<redacted>" is emitted rather than separate lines.
 func argsDiff(oldArgs, newArgs []string) []FieldDiff {
 	oldSet := make(map[string]bool, len(oldArgs))
 	for _, a := range oldArgs {
@@ -280,12 +282,57 @@ func argsDiff(oldArgs, newArgs []string) []FieldDiff {
 		}
 	}
 
+	// Pair up sensitive flag changes: if the same prefix appears in both removed
+	// and added, the value changed — emit a single modified entry instead of
+	// separate remove+add lines that both redact to the same visible string.
+	pairedPrefixes := make(map[string]bool)
+	for _, pfx := range sensitiveArgPrefixes {
+		var inRemoved, inAdded bool
+		for _, r := range removed {
+			if strings.HasPrefix(r, pfx) {
+				inRemoved = true
+				break
+			}
+		}
+		for _, a := range added {
+			if strings.HasPrefix(a, pfx) {
+				inAdded = true
+				break
+			}
+		}
+		if inRemoved && inAdded {
+			pairedPrefixes[pfx] = true
+		}
+	}
+
 	var diffs []FieldDiff
+	// Emit paired sensitive changes as a single modified entry.
+	for pfx := range pairedPrefixes {
+		diffs = append(diffs, FieldDiff{Field: "Exec Args", Old: pfx + "<redacted>", New: pfx + "<redacted>"})
+	}
 	for _, r := range removed {
-		diffs = append(diffs, FieldDiff{Field: "Exec Args", Old: redactArg(r), New: ""})
+		isPaired := false
+		for pfx := range pairedPrefixes {
+			if strings.HasPrefix(r, pfx) {
+				isPaired = true
+				break
+			}
+		}
+		if !isPaired {
+			diffs = append(diffs, FieldDiff{Field: "Exec Args", Old: redactArg(r), New: ""})
+		}
 	}
 	for _, a := range added {
-		diffs = append(diffs, FieldDiff{Field: "Exec Args", Old: "", New: redactArg(a)})
+		isPaired := false
+		for pfx := range pairedPrefixes {
+			if strings.HasPrefix(a, pfx) {
+				isPaired = true
+				break
+			}
+		}
+		if !isPaired {
+			diffs = append(diffs, FieldDiff{Field: "Exec Args", Old: "", New: redactArg(a)})
+		}
 	}
 	return diffs
 }
@@ -445,8 +492,8 @@ func buildAccessDiffs(diff KubeconfigDiff, oldCfg, newCfg *clientcmdapi.Config) 
 	}
 
 	// 2. For each modified cluster, find contexts in newCfg that reference it.
-	// If those contexts were not already captured via context-level diffs, add
-	// a "modified" access entry reflecting the cluster field changes (Server, CA, Labels).
+	// Merge cluster field changes (Server, CA, Labels) into the access entry,
+	// creating a new entry if the context was not already captured in step 1.
 	modifiedClusters := make(map[string]EntryDiff, len(diff.Clusters))
 	for _, cd := range diff.Clusters {
 		if cd.ChangeType == DiffChangeModified {
@@ -455,9 +502,6 @@ func buildAccessDiffs(diff KubeconfigDiff, oldCfg, newCfg *clientcmdapi.Config) 
 	}
 	if len(modifiedClusters) > 0 {
 		for ctxName, ctx := range newCfg.Contexts {
-			if _, alreadyHandled := byName[ctxName]; alreadyHandled {
-				continue
-			}
 			clusterDiff, affected := modifiedClusters[ctx.Cluster]
 			if !affected {
 				continue
@@ -473,20 +517,27 @@ func buildAccessDiffs(diff KubeconfigDiff, oldCfg, newCfg *clientcmdapi.Config) 
 			if len(fields) == 0 {
 				continue
 			}
-			byName[ctxName] = &accessEntry{
-				access: output.AccessDiff{
-					Name:       ctxName,
-					ChangeType: string(DiffChangeModified),
-					Fields:     fields,
-				},
+			if existing, ok := byName[ctxName]; ok {
+				// Merge cluster fields into the existing entry.
+				existing.access.Fields = append(fields, existing.access.Fields...)
+			} else {
+				byName[ctxName] = &accessEntry{
+					access: output.AccessDiff{
+						Name:       ctxName,
+						ChangeType: string(DiffChangeModified),
+						Fields:     fields,
+					},
+				}
 			}
 		}
 	}
 
 	// 3. For each modified authinfo, find contexts in newCfg that reference it.
 	// Carry the actual field diffs (exec args, auth-provider config) through so
-	// diff format can show real old/new values. Fall back to a generic
-	// "Credentials: changed" entry only when no specific fields were identified.
+	// diff format can show real old/new values. Merge into an existing entry when
+	// one was already created by step 1 or 2, so credential changes are never
+	// silently dropped. Fall back to a generic "Credentials: changed" entry only
+	// when no specific fields were identified.
 	modifiedAuthInfos := make(map[string]EntryDiff, len(diff.AuthInfos))
 	for _, ad := range diff.AuthInfos {
 		if ad.ChangeType == DiffChangeModified {
@@ -495,9 +546,6 @@ func buildAccessDiffs(diff KubeconfigDiff, oldCfg, newCfg *clientcmdapi.Config) 
 	}
 	if len(modifiedAuthInfos) > 0 {
 		for ctxName, ctx := range newCfg.Contexts {
-			if _, alreadyHandled := byName[ctxName]; alreadyHandled {
-				continue
-			}
 			ad, affected := modifiedAuthInfos[ctx.AuthInfo]
 			if !affected {
 				continue
@@ -514,12 +562,17 @@ func buildAccessDiffs(diff KubeconfigDiff, oldCfg, newCfg *clientcmdapi.Config) 
 				// authInfoEqual returned false but no specific fields were identified.
 				fields = []output.FieldChange{{Field: "Credentials", Old: "changed", New: ""}}
 			}
-			byName[ctxName] = &accessEntry{
-				access: output.AccessDiff{
-					Name:       ctxName,
-					ChangeType: string(DiffChangeModified),
-					Fields:     fields,
-				},
+			if existing, ok := byName[ctxName]; ok {
+				// Merge credential fields into the existing entry.
+				existing.access.Fields = append(existing.access.Fields, fields...)
+			} else {
+				byName[ctxName] = &accessEntry{
+					access: output.AccessDiff{
+						Name:       ctxName,
+						ChangeType: string(DiffChangeModified),
+						Fields:     fields,
+					},
+				}
 			}
 		}
 	}
