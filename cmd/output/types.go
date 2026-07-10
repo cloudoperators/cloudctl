@@ -68,9 +68,6 @@ type SyncDryRunResult struct {
 	Added     int          `json:"added"     yaml:"added"`
 	Removed   int          `json:"removed"   yaml:"removed"`
 	Modified  int          `json:"modified"  yaml:"modified"`
-	// Format controls how plain/interactive printers render this result.
-	// Accepted values: "table" (default), "diff". Ignored by JSON/YAML output.
-	Format string `json:"-" yaml:"-"`
 }
 
 // DiffEntry describes a single added, removed, or modified kubeconfig entry.

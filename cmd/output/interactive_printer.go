@@ -221,75 +221,9 @@ func (p *interactivePrinter) printSyncDryRunResult(r SyncDryRunResult) error {
 	w("%s\n\n", styleFaint.Render("Dry-run: no changes will be written."))
 	w("%s (%d change(s))\n", styleHeader.Render("CLUSTER ACCESSES"), total)
 
-	if r.Format == "diff" {
-		p.printDryRunDiff(w, r)
-	} else {
-		p.printDryRunTable(w, r)
-	}
+	p.printDryRunDiff(w, r)
 
 	return writeErr
-}
-
-func (p *interactivePrinter) printDryRunTable(w func(string, ...any), r SyncDryRunResult) {
-	nameWidth := len("NAME")
-	for _, a := range r.Accesses {
-		if len(a.Name) > nameWidth {
-			nameWidth = len(a.Name)
-		}
-	}
-	nameWidth += 2
-
-	hasAddedOrRemoved := r.Added > 0 || r.Removed > 0
-	if hasAddedOrRemoved {
-		w("  %-*s  %s\n", nameWidth, styleBold.Render("NAME"), styleBold.Render("SERVER"))
-		for _, a := range r.Accesses {
-			switch a.ChangeType {
-			case "added":
-				w("  %s %-*s  %s\n", styleGreen.Render("+"), nameWidth, a.Name, styleFaint.Render(a.Server))
-			case "removed":
-				w("  %s %-*s  %s\n", styleRed.Render("-"), nameWidth, a.Name, styleFaint.Render("(removed)"))
-			}
-		}
-	}
-
-	if r.Modified > 0 {
-		if hasAddedOrRemoved {
-			w("\n")
-		}
-		w("  %-*s  %s\n", nameWidth, styleBold.Render("NAME"), styleBold.Render("CHANGES"))
-		for _, a := range r.Accesses {
-			if a.ChangeType != "modified" {
-				continue
-			}
-			if hasDetailFields(a) {
-				w("  %s %s\n", styleYellow.Render("~"), a.Name)
-				for _, f := range a.Fields {
-					if f.Field == "Credentials" {
-						w("      %-14s  %s\n", "credentials:", styleYellow.Render("changed"))
-					} else if f.Old != "" || f.New != "" {
-						label := strings.ToLower(f.Field) + ":"
-						w("      %-14s  %s → %s\n", label,
-							styleRed.Render(orElse(f.Old, "(none)")),
-							styleGreen.Render(orElse(f.New, "(none)")))
-					}
-				}
-			} else {
-				summary := accessChangeSummary(a)
-				var styledSummary string
-				switch summary {
-				case "credentials":
-					styledSummary = styleYellow.Render(summary)
-				case "server", "ca":
-					styledSummary = styleRed.Render(summary)
-				default:
-					styledSummary = styleFaint.Render(summary)
-				}
-				w("  %s %-*s  %s\n", styleYellow.Render("~"), nameWidth, a.Name, styledSummary)
-			}
-		}
-	}
-
-	p.printDryRunSummary(w, r)
 }
 
 func (p *interactivePrinter) printDryRunDiff(w func(string, ...any), r SyncDryRunResult) {

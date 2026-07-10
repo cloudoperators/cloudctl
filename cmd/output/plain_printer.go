@@ -76,12 +76,7 @@ func (p *plainPrinter) Print(v any) error {
 		}
 		w("Dry-run: no changes will be written.\n\n")
 		w("CLUSTER ACCESSES (%d change(s))\n", total)
-
-		if t.Format == "diff" {
-			p.printDryRunDiff(w, t)
-		} else {
-			p.printDryRunTable(w, t)
-		}
+		p.printDryRunDiff(w, t)
 
 	case ClusterVersionResult:
 		w("Kubernetes version: %s\n", t.Version)
@@ -104,63 +99,6 @@ func (p *plainPrinter) PrintError(err error) {
 
 func (p *plainPrinter) StartSpinner(_ string) func() {
 	return func() {}
-}
-
-// printDryRunTable renders dry-run output as a compact NAME | CHANGES table.
-func (p *plainPrinter) printDryRunTable(w func(string, ...any), t SyncDryRunResult) {
-	nameWidth := len("NAME")
-	for _, a := range t.Accesses {
-		if len(a.Name) > nameWidth {
-			nameWidth = len(a.Name)
-		}
-	}
-	nameWidth += 2
-
-	hasAddedOrRemoved := t.Added > 0 || t.Removed > 0
-	if hasAddedOrRemoved {
-		w("  %-*s  %s\n", nameWidth, "NAME", "SERVER")
-		for _, a := range t.Accesses {
-			switch a.ChangeType {
-			case "added":
-				w("  + %-*s  %s\n", nameWidth, a.Name, a.Server)
-			case "removed":
-				w("  - %-*s  (removed)\n", nameWidth, a.Name)
-			}
-		}
-	}
-
-	if t.Modified > 0 {
-		if hasAddedOrRemoved {
-			w("\n")
-		}
-		w("  %-*s  %s\n", nameWidth, "NAME", "CHANGES")
-		for _, a := range t.Accesses {
-			if a.ChangeType != "modified" {
-				continue
-			}
-			if hasDetailFields(a) {
-				w("  ~ %s\n", a.Name)
-				for _, f := range a.Fields {
-					if f.Field == "Credentials" {
-						w("      %-14s  changed\n", "credentials:")
-					} else if f.Old != "" || f.New != "" {
-						label := strings.ToLower(f.Field) + ":"
-						w("      %-14s  %s → %s\n", label, orElse(f.Old, "(none)"), orElse(f.New, "(none)"))
-					}
-				}
-			} else {
-				w("  ~ %-*s  %s\n", nameWidth, a.Name, accessChangeSummary(a))
-			}
-		}
-	}
-
-	modBreakdown := modifiedBreakdown(t.Accesses)
-	modSuffix := ""
-	if t.Modified > 0 && len(modBreakdown) > 0 {
-		modSuffix = " (" + strings.Join(modBreakdown, ", ") + ")"
-	}
-	w("\nSummary: %d added, %d removed, %d modified%s. No changes will be written.\n",
-		t.Added, t.Removed, t.Modified, modSuffix)
 }
 
 // printDryRunDiff renders dry-run output in git-style unified diff format:
@@ -203,26 +141,6 @@ func (p *plainPrinter) printDryRunDiff(w func(string, ...any), t SyncDryRunResul
 	}
 	w("\nSummary: %d added, %d removed, %d modified%s. No changes will be written.\n",
 		t.Added, t.Removed, t.Modified, modSuffix)
-}
-
-// hasDetailFields returns true when the access diff contains at least one
-// field that has old/new values worth printing inline (excludes the synthetic
-// Credentials sentinel which carries no real values).
-func hasDetailFields(a AccessDiff) bool {
-	for _, f := range a.Fields {
-		if f.Field != "Credentials" && (f.Old != "" || f.New != "") {
-			return true
-		}
-	}
-	return false
-}
-
-// orElse returns s if non-empty, otherwise fallback.
-func orElse(s, fallback string) string {
-	if s != "" {
-		return s
-	}
-	return fallback
 }
 
 // accessChangeSummary returns a compact, human-readable string describing what
