@@ -146,39 +146,6 @@ func (p *plainPrinter) printDryRunDiff(w func(string, ...any), t SyncDryRunResul
 		t.Added, t.Removed, t.Modified, modSuffix)
 }
 
-// accessChangeSummary returns a compact, human-readable string describing what
-// changed in a modified AccessDiff entry (e.g. "credentials", "server", "config").
-func accessChangeSummary(a AccessDiff) string {
-	if len(a.Fields) == 0 {
-		return "config"
-	}
-	seen := make(map[string]struct{}, len(a.Fields))
-	for _, f := range a.Fields {
-		switch {
-		case f.Field == "Credentials":
-			seen["credentials"] = struct{}{}
-		case f.Field == "Server":
-			seen["server"] = struct{}{}
-		case f.Field == "CA":
-			seen["ca"] = struct{}{}
-		case f.Field == "Labels":
-			seen["labels"] = struct{}{}
-		case f.Field == "Exec Args" || f.Field == "Auth type":
-			seen["credentials"] = struct{}{}
-		case strings.HasPrefix(f.Field, "auth-provider."):
-			seen["credentials"] = struct{}{}
-		default:
-			seen["config"] = struct{}{}
-		}
-	}
-	parts := make([]string, 0, len(seen))
-	for k := range seen {
-		parts = append(parts, k)
-	}
-	sort.Strings(parts)
-	return strings.Join(parts, ", ")
-}
-
 // modifiedBreakdown counts individual change categories across all modified
 // accesses and returns them as sorted "N reason" strings
 // (e.g. ["45 credentials", "1 server"]).
