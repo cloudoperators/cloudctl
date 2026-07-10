@@ -6,6 +6,10 @@ on:
     branches: [ main ]
 
 jobs:
+  lint:
+    name: Lint
+    uses: cloudoperators/common/.github/workflows/shared-go-lint.yaml@main
+
   unit:
     name: Unit tests
     uses: cloudoperators/common/.github/workflows/shared-go-test.yaml@main
