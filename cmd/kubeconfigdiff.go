@@ -410,6 +410,16 @@ func buildAccessDiffs(diff KubeconfigDiff, oldCfg, newCfg *clientcmdapi.Config) 
 			if oldCtx == nil || newCtx == nil {
 				break
 			}
+			// Namespace change (carried directly from the context-level diff fields)
+			for _, fd := range ctxDiff.Fields {
+				if fd.Field == "Namespace" {
+					entry.access.Fields = append(entry.access.Fields, output.FieldChange{
+						Field: "Namespace",
+						Old:   fd.Old,
+						New:   fd.New,
+					})
+				}
+			}
 			// Server URL change (resolve through cluster refs)
 			oldCluster := oldCfg.Clusters[oldCtx.Cluster]
 			newCluster := newCfg.Clusters[newCtx.Cluster]
