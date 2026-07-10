@@ -244,7 +244,9 @@ func (p *interactivePrinter) printSyncDryRunResult(r SyncDryRunResult) error {
 		}
 	}
 
-	// Print modified entries as a table with a CHANGES column.
+	// Print modified entries. Entries with only credential changes are
+	// shown as compact single-line table rows. Entries with field-level
+	// values (server, ca, etc.) expand with old → new detail lines.
 	if r.Modified > 0 {
 		if hasAddedOrRemoved {
 			w("\n")
@@ -254,17 +256,31 @@ func (p *interactivePrinter) printSyncDryRunResult(r SyncDryRunResult) error {
 			if a.ChangeType != "modified" {
 				continue
 			}
-			summary := accessChangeSummary(a)
-			var styledSummary string
-			switch summary {
-			case "credentials":
-				styledSummary = styleYellow.Render(summary)
-			case "server", "ca":
-				styledSummary = styleRed.Render(summary)
-			default:
-				styledSummary = styleFaint.Render(summary)
+			if hasDetailFields(a) {
+				w("  %s %s\n", styleYellow.Render("~"), a.Name)
+				for _, f := range a.Fields {
+					if f.Field == "Credentials" {
+						w("      %-14s  %s\n", "credentials:", styleYellow.Render("changed"))
+					} else if f.Old != "" || f.New != "" {
+						label := strings.ToLower(f.Field) + ":"
+						w("      %-14s  %s → %s\n", label,
+							styleRed.Render(orElse(f.Old, "(none)")),
+							styleGreen.Render(orElse(f.New, "(none)")))
+					}
+				}
+			} else {
+				summary := accessChangeSummary(a)
+				var styledSummary string
+				switch summary {
+				case "credentials":
+					styledSummary = styleYellow.Render(summary)
+				case "server", "ca":
+					styledSummary = styleRed.Render(summary)
+				default:
+					styledSummary = styleFaint.Render(summary)
+				}
+				w("  %s %-*s  %s\n", styleYellow.Render("~"), nameWidth, a.Name, styledSummary)
 			}
-			w("  %s %-*s  %s\n", styleYellow.Render("~"), nameWidth, a.Name, styledSummary)
 		}
 	}
 

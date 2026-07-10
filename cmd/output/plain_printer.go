@@ -100,7 +100,9 @@ func (p *plainPrinter) Print(v any) error {
 			}
 		}
 
-		// Print modified entries as a table with a CHANGES column.
+		// Print modified entries. Entries with only credential changes are
+		// shown as compact single-line table rows. Entries with field-level
+		// values (server, ca, etc.) expand with old → new detail lines.
 		if t.Modified > 0 {
 			if hasAddedOrRemoved {
 				w("\n")
@@ -110,7 +112,19 @@ func (p *plainPrinter) Print(v any) error {
 				if a.ChangeType != "modified" {
 					continue
 				}
-				w("  ~ %-*s  %s\n", nameWidth, a.Name, accessChangeSummary(a))
+				if hasDetailFields(a) {
+					w("  ~ %s\n", a.Name)
+					for _, f := range a.Fields {
+						if f.Field == "Credentials" {
+							w("      %-14s  changed\n", "credentials:")
+						} else if f.Old != "" || f.New != "" {
+							label := strings.ToLower(f.Field) + ":"
+							w("      %-14s  %s → %s\n", label, orElse(f.Old, "(none)"), orElse(f.New, "(none)"))
+						}
+					}
+				} else {
+					w("  ~ %-*s  %s\n", nameWidth, a.Name, accessChangeSummary(a))
+				}
 			}
 		}
 
@@ -144,6 +158,25 @@ func (p *plainPrinter) PrintError(err error) {
 
 func (p *plainPrinter) StartSpinner(_ string) func() {
 	return func() {}
+}
+
+// hasDetailFields returns true when the access diff contains at least one
+// non-Credentials field that has old/new values worth printing inline.
+func hasDetailFields(a AccessDiff) bool {
+	for _, f := range a.Fields {
+		if f.Field != "Credentials" && (f.Old != "" || f.New != "") {
+			return true
+		}
+	}
+	return false
+}
+
+// orElse returns s if non-empty, otherwise fallback.
+func orElse(s, fallback string) string {
+	if s != "" {
+		return s
+	}
+	return fallback
 }
 
 // accessChangeSummary returns a compact, human-readable string describing what
