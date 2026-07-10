@@ -565,11 +565,12 @@ func TestMergeKubeconfig_PrefersExistingLocalAuthName(t *testing.T) {
 	g := NewWithT(t)
 
 	orig := prefix
+	origMerge := mergeIdenticalUsers
 	prefix = "cloudctl"
 	mergeIdenticalUsers = true
 	t.Cleanup(func() {
 		prefix = orig
-		mergeIdenticalUsers = true
+		mergeIdenticalUsers = origMerge
 	})
 
 	// The local kubeconfig has an unmanaged user entry with the same OIDC creds
@@ -623,11 +624,12 @@ func TestMergeKubeconfig_DeduplicatesSameOIDCUsers(t *testing.T) {
 	g := NewWithT(t)
 
 	orig := prefix
+	origMerge := mergeIdenticalUsers
 	prefix = "cloudctl"
 	mergeIdenticalUsers = true
 	t.Cleanup(func() {
 		prefix = orig
-		mergeIdenticalUsers = true
+		mergeIdenticalUsers = origMerge
 	})
 
 	// Two clusters with the same OIDC config should share one auth entry
@@ -848,11 +850,12 @@ func TestRunSync_DryRun_NoWrite(t *testing.T) {
 	g := NewWithT(t)
 
 	orig := prefix
+	origMerge := mergeIdenticalUsers
 	prefix = "cloudctl"
 	mergeIdenticalUsers = true
 	t.Cleanup(func() {
 		prefix = orig
-		mergeIdenticalUsers = true
+		mergeIdenticalUsers = origMerge
 	})
 
 	// Build a "before" and "after" config to simulate what dry-run does

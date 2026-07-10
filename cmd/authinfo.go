@@ -69,13 +69,19 @@ func authInfoEqual(a, b *clientcmdapi.AuthInfo) bool {
 	return true
 }
 
-// equalExecEnv compares two ExecEnvVar slices for equality.
+// equalExecEnv compares two ExecEnvVar slices for equality, independent of ordering.
 func equalExecEnv(a, b []clientcmdapi.ExecEnvVar) bool {
 	if len(a) != len(b) {
 		return false
 	}
-	for i := range a {
-		if a[i].Name != b[i].Name || a[i].Value != b[i].Value {
+	// Build a frequency map so order differences are not treated as changes.
+	counts := make(map[string]int, len(a))
+	for _, e := range a {
+		counts[e.Name+"="+e.Value]++
+	}
+	for _, e := range b {
+		counts[e.Name+"="+e.Value]--
+		if counts[e.Name+"="+e.Value] < 0 {
 			return false
 		}
 	}

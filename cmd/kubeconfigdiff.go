@@ -9,11 +9,24 @@ import (
 	"encoding/hex"
 	"fmt"
 	"sort"
+	"strings"
 
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 
 	"github.com/cloudoperators/cloudctl/cmd/output"
 )
+
+// sensitiveAuthProviderKeys are auth-provider config keys whose values must
+// not appear in plain or structured diff output.
+var sensitiveAuthProviderKeys = map[string]bool{
+	"client-secret": true,
+}
+
+// sensitiveArgPrefixes are kubelogin (and similar) flag prefixes whose values
+// must not appear verbatim in diff output.
+var sensitiveArgPrefixes = []string{
+	"--oidc-client-secret=",
+}
 
 // DiffChangeType describes the kind of change detected for a kubeconfig entry.
 type DiffChangeType string
@@ -203,6 +216,9 @@ func diffAuthInfos(oldCfg, newCfg *clientcmdapi.Config) []EntryDiff {
 				ov := oldFiltered[k]
 				nv := newFiltered[k]
 				if ov != nv {
+					if sensitiveAuthProviderKeys[k] {
+						ov, nv = "<redacted>", "<redacted>"
+					}
 					fields = append(fields, FieldDiff{Field: fmt.Sprintf("auth-provider.%s", k), Old: ov, New: nv})
 				}
 			}
@@ -228,8 +244,20 @@ func diffAuthInfos(oldCfg, newCfg *clientcmdapi.Config) []EntryDiff {
 	return diffs
 }
 
+// redactArg replaces the value portion of a sensitive flag with <redacted>,
+// leaving the flag name intact for readability (e.g. "--oidc-client-secret=<redacted>").
+func redactArg(arg string) string {
+	for _, pfx := range sensitiveArgPrefixes {
+		if strings.HasPrefix(arg, pfx) {
+			return pfx + "<redacted>"
+		}
+	}
+	return arg
+}
+
 // argsDiff computes per-argument differences between two exec arg lists, returning
 // FieldDiff entries for args that appear only in old (removed) or only in new (added).
+// Values of sensitive flags (e.g. --oidc-client-secret=) are redacted.
 func argsDiff(oldArgs, newArgs []string) []FieldDiff {
 	oldSet := make(map[string]bool, len(oldArgs))
 	for _, a := range oldArgs {
@@ -254,10 +282,10 @@ func argsDiff(oldArgs, newArgs []string) []FieldDiff {
 
 	var diffs []FieldDiff
 	for _, r := range removed {
-		diffs = append(diffs, FieldDiff{Field: "Exec Args", Old: r, New: ""})
+		diffs = append(diffs, FieldDiff{Field: "Exec Args", Old: redactArg(r), New: ""})
 	}
 	for _, a := range added {
-		diffs = append(diffs, FieldDiff{Field: "Exec Args", Old: "", New: a})
+		diffs = append(diffs, FieldDiff{Field: "Exec Args", Old: "", New: redactArg(a)})
 	}
 	return diffs
 }
@@ -363,7 +391,7 @@ func buildAccessDiffs(diff KubeconfigDiff, oldCfg, newCfg *clientcmdapi.Config) 
 
 	// 2. For each modified cluster, find contexts in newCfg that reference it.
 	// If those contexts were not already captured via context-level diffs, add
-	// a "modified" access entry for the server URL change.
+	// a "modified" access entry reflecting the cluster field changes (Server, CA, Labels).
 	modifiedClusters := make(map[string]EntryDiff, len(diff.Clusters))
 	for _, cd := range diff.Clusters {
 		if cd.ChangeType == DiffChangeModified {
@@ -381,13 +409,11 @@ func buildAccessDiffs(diff KubeconfigDiff, oldCfg, newCfg *clientcmdapi.Config) 
 			}
 			var fields []output.FieldChange
 			for _, f := range clusterDiff.Fields {
-				if f.Field == "Server" {
-					fields = append(fields, output.FieldChange{
-						Field: "Server",
-						Old:   f.Old,
-						New:   f.New,
-					})
-				}
+				fields = append(fields, output.FieldChange{
+					Field: f.Field,
+					Old:   f.Old,
+					New:   f.New,
+				})
 			}
 			if len(fields) == 0 {
 				continue
@@ -397,6 +423,33 @@ func buildAccessDiffs(diff KubeconfigDiff, oldCfg, newCfg *clientcmdapi.Config) 
 					Name:       ctxName,
 					ChangeType: string(DiffChangeModified),
 					Fields:     fields,
+				},
+			}
+		}
+	}
+
+	// 3. For each modified authinfo, find contexts in newCfg that reference it.
+	// If those contexts were not already captured above, emit a "modified" access
+	// entry with Credentials: changed so credential-only syncs are not silent.
+	modifiedAuthInfos := make(map[string]struct{}, len(diff.AuthInfos))
+	for _, ad := range diff.AuthInfos {
+		if ad.ChangeType == DiffChangeModified {
+			modifiedAuthInfos[ad.Name] = struct{}{}
+		}
+	}
+	if len(modifiedAuthInfos) > 0 {
+		for ctxName, ctx := range newCfg.Contexts {
+			if _, alreadyHandled := byName[ctxName]; alreadyHandled {
+				continue
+			}
+			if _, affected := modifiedAuthInfos[ctx.AuthInfo]; !affected {
+				continue
+			}
+			byName[ctxName] = &accessEntry{
+				access: output.AccessDiff{
+					Name:       ctxName,
+					ChangeType: string(DiffChangeModified),
+					Fields:     []output.FieldChange{{Field: "Credentials", Old: "changed", New: ""}},
 				},
 			}
 		}
