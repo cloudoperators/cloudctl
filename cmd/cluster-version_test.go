@@ -88,3 +88,43 @@ func TestGetUnauthenticatedVersion_InsecureTLS(t *testing.T) {
 
 	_ = tls.Config{} // keep import used
 }
+
+func TestGetAuthenticatedVersion_OK(t *testing.T) {
+	g := NewWithT(t)
+
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/version" {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(&version.Info{GitVersion: "v1.30.0"})
+	}))
+	defer srv.Close()
+
+	// Use the test server's CA so TLS verification passes without InsecureSkipVerify.
+	cfg := &rest.Config{
+		Host:      srv.URL,
+		Transport: srv.Client().Transport,
+	}
+	v, err := getAuthenticatedVersion(context.Background(), cfg)
+	g.Expect(err).ToNot(HaveOccurred())
+	g.Expect(v).ToNot(BeNil())
+	g.Expect(v.GitVersion).To(Equal("v1.30.0"))
+}
+
+func TestGetAuthenticatedVersion_NonOKStatus(t *testing.T) {
+	g := NewWithT(t)
+
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	cfg := &rest.Config{
+		Host:      srv.URL,
+		Transport: srv.Client().Transport,
+	}
+	_, err := getAuthenticatedVersion(context.Background(), cfg)
+	g.Expect(err).To(HaveOccurred())
+	g.Expect(err.Error()).To(ContainSubstring("500"))
+}
