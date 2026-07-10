@@ -467,3 +467,414 @@ func TestGenerateAuthInfoKey_ExecStableIgnoresOrder(t *testing.T) {
 	kb := generateAuthInfoKey(b)
 	g.Expect(ka).To(Equal(kb))
 }
+
+// ---------------------------------------------------------------------------
+// AuthInfo refactor (#54) — new tests
+// ---------------------------------------------------------------------------
+
+func TestAuthInfoEqual_ExecEnvConsidered(t *testing.T) {
+	g := NewWithT(t)
+
+	base := &clientcmdapi.AuthInfo{Exec: &clientcmdapi.ExecConfig{
+		APIVersion: "client.authentication.k8s.io/v1",
+		Command:    "kubelogin",
+		Args:       []string{"get-token"},
+		Env:        []clientcmdapi.ExecEnvVar{{Name: "HTTP_PROXY", Value: "http://proxy.example.com"}},
+	}}
+	diff := &clientcmdapi.AuthInfo{Exec: &clientcmdapi.ExecConfig{
+		APIVersion: "client.authentication.k8s.io/v1",
+		Command:    "kubelogin",
+		Args:       []string{"get-token"},
+		Env:        []clientcmdapi.ExecEnvVar{{Name: "HTTP_PROXY", Value: "http://other.example.com"}},
+	}}
+
+	g.Expect(authInfoEqual(base, diff)).To(BeFalse(), "different Env values must not be equal")
+
+	same := base.DeepCopy()
+	g.Expect(authInfoEqual(base, same)).To(BeTrue(), "identical Env must be equal")
+}
+
+func TestAuthInfoEqual_ExecInteractiveModeConsidered(t *testing.T) {
+	g := NewWithT(t)
+
+	a := &clientcmdapi.AuthInfo{Exec: &clientcmdapi.ExecConfig{
+		APIVersion:      "client.authentication.k8s.io/v1",
+		Command:         "kubelogin",
+		Args:            []string{"get-token"},
+		InteractiveMode: clientcmdapi.IfAvailableExecInteractiveMode,
+	}}
+	b := a.DeepCopy()
+	b.Exec.InteractiveMode = clientcmdapi.NeverExecInteractiveMode
+
+	g.Expect(authInfoEqual(a, b)).To(BeFalse(), "different InteractiveMode must not be equal")
+	g.Expect(authInfoEqual(a, a.DeepCopy())).To(BeTrue())
+}
+
+func TestGenerateAuthInfoKey_AuthProviderIncludesIssuer(t *testing.T) {
+	g := NewWithT(t)
+
+	// Same client-id but different issuers — must produce different keys
+	a := &clientcmdapi.AuthInfo{
+		AuthProvider: &clientcmdapi.AuthProviderConfig{
+			Name: "oidc",
+			Config: map[string]string{
+				"idp-issuer-url": "https://issuer-a.example.com",
+				"client-id":      "same-client-id",
+				"client-secret":  "same-secret",
+			},
+		},
+	}
+	b := &clientcmdapi.AuthInfo{
+		AuthProvider: &clientcmdapi.AuthProviderConfig{
+			Name: "oidc",
+			Config: map[string]string{
+				"idp-issuer-url": "https://issuer-b.example.com",
+				"client-id":      "same-client-id",
+				"client-secret":  "same-secret",
+			},
+		},
+	}
+
+	ka := generateAuthInfoKey(a)
+	kb := generateAuthInfoKey(b)
+	g.Expect(ka).ToNot(Equal(kb), "different idp-issuer-url must produce different keys")
+}
+
+func TestGenerateAuthInfoKey_ExecEnvAffectsKey(t *testing.T) {
+	g := NewWithT(t)
+
+	a := &clientcmdapi.AuthInfo{Exec: &clientcmdapi.ExecConfig{
+		APIVersion: "client.authentication.k8s.io/v1",
+		Command:    "kubelogin",
+		Args:       []string{"get-token", "--oidc-issuer-url=https://issuer", "--oidc-client-id=cid"},
+		Env:        []clientcmdapi.ExecEnvVar{{Name: "HTTP_PROXY", Value: "http://proxy.example.com"}},
+	}}
+	b := &clientcmdapi.AuthInfo{Exec: &clientcmdapi.ExecConfig{
+		APIVersion: "client.authentication.k8s.io/v1",
+		Command:    "kubelogin",
+		Args:       []string{"get-token", "--oidc-issuer-url=https://issuer", "--oidc-client-id=cid"},
+		// no Env
+	}}
+
+	ka := generateAuthInfoKey(a)
+	kb := generateAuthInfoKey(b)
+	g.Expect(ka).ToNot(Equal(kb), "exec env change must produce different key")
+}
+
+func TestMergeKubeconfig_PrefersExistingLocalAuthName(t *testing.T) {
+	g := NewWithT(t)
+
+	orig := prefix
+	prefix = "cloudctl"
+	mergeIdenticalUsers = true
+	t.Cleanup(func() {
+		prefix = orig
+		mergeIdenticalUsers = true
+	})
+
+	// The local kubeconfig has an unmanaged user entry with the same OIDC creds
+	// as what the server would produce.
+	localAuth := &clientcmdapi.AuthInfo{
+		AuthProvider: &clientcmdapi.AuthProviderConfig{
+			Name: "oidc",
+			Config: map[string]string{
+				"idp-issuer-url": "https://issuer.example.com",
+				"client-id":      "cid",
+				"client-secret":  "csec",
+			},
+		},
+	}
+	localConfig := clientcmdapi.NewConfig()
+	localConfig.AuthInfos["my-existing-user"] = localAuth
+
+	// Server config has the same OIDC creds
+	serverAuth := &clientcmdapi.AuthInfo{
+		AuthProvider: &clientcmdapi.AuthProviderConfig{
+			Name: "oidc",
+			Config: map[string]string{
+				"idp-issuer-url": "https://issuer.example.com",
+				"client-id":      "cid",
+				"client-secret":  "csec",
+			},
+		},
+	}
+	serverConfig := clientcmdapi.NewConfig()
+	serverConfig.AuthInfos["server-user"] = serverAuth
+	serverConfig.Clusters["prod"] = &clientcmdapi.Cluster{Server: "https://prod.example.com"}
+	serverConfig.Contexts["prod"] = &clientcmdapi.Context{
+		Cluster:  "prod",
+		AuthInfo: "server-user",
+	}
+
+	err := mergeKubeconfig(localConfig, serverConfig)
+	g.Expect(err).ToNot(HaveOccurred())
+
+	// The unmanaged "my-existing-user" should be reused — no cloudctl:auth-* should be created
+	for name := range localConfig.AuthInfos {
+		g.Expect(name).ToNot(HavePrefix("cloudctl:auth-"), "should reuse existing local user, not create managed auth entry")
+	}
+	// The context should reference the existing local user
+	ctx, ok := localConfig.Contexts["prod"]
+	g.Expect(ok).To(BeTrue())
+	g.Expect(ctx.AuthInfo).To(Equal("my-existing-user"))
+}
+
+func TestMergeKubeconfig_DeduplicatesSameOIDCUsers(t *testing.T) {
+	g := NewWithT(t)
+
+	orig := prefix
+	prefix = "cloudctl"
+	mergeIdenticalUsers = true
+	t.Cleanup(func() {
+		prefix = orig
+		mergeIdenticalUsers = true
+	})
+
+	// Two clusters with the same OIDC config should share one auth entry
+	sharedAuth := clientcmdapi.AuthInfo{
+		AuthProvider: &clientcmdapi.AuthProviderConfig{
+			Name: "oidc",
+			Config: map[string]string{
+				"idp-issuer-url": "https://issuer.example.com",
+				"client-id":      "shared-client-id",
+				"client-secret":  "shared-secret",
+			},
+		},
+	}
+	serverConfig := clientcmdapi.NewConfig()
+	serverConfig.AuthInfos["cluster-a-user"] = sharedAuth.DeepCopy()
+	serverConfig.AuthInfos["cluster-b-user"] = sharedAuth.DeepCopy()
+	serverConfig.Clusters["cluster-a"] = &clientcmdapi.Cluster{Server: "https://a.example.com"}
+	serverConfig.Clusters["cluster-b"] = &clientcmdapi.Cluster{Server: "https://b.example.com"}
+	serverConfig.Contexts["cluster-a"] = &clientcmdapi.Context{Cluster: "cluster-a", AuthInfo: "cluster-a-user"}
+	serverConfig.Contexts["cluster-b"] = &clientcmdapi.Context{Cluster: "cluster-b", AuthInfo: "cluster-b-user"}
+
+	localConfig := clientcmdapi.NewConfig()
+	err := mergeKubeconfig(localConfig, serverConfig)
+	g.Expect(err).ToNot(HaveOccurred())
+
+	// Count managed auth entries — should be exactly 1
+	managedAuthCount := 0
+	var sharedAuthName string
+	for name := range localConfig.AuthInfos {
+		if isManaged(name) {
+			managedAuthCount++
+			sharedAuthName = name
+		}
+	}
+	g.Expect(managedAuthCount).To(Equal(1), "two clusters with same OIDC config should share one auth entry")
+
+	// Both contexts must reference the same auth entry
+	ctxA := localConfig.Contexts["cluster-a"]
+	ctxB := localConfig.Contexts["cluster-b"]
+	g.Expect(ctxA).ToNot(BeNil())
+	g.Expect(ctxB).ToNot(BeNil())
+	g.Expect(ctxA.AuthInfo).To(Equal(sharedAuthName))
+	g.Expect(ctxB.AuthInfo).To(Equal(sharedAuthName))
+}
+
+// ---------------------------------------------------------------------------
+// Dry-run / diffKubeconfig tests (#51)
+// ---------------------------------------------------------------------------
+
+func newCfg() *clientcmdapi.Config {
+	return clientcmdapi.NewConfig()
+}
+
+func TestDiffKubeconfig_AddedCluster(t *testing.T) {
+	g := NewWithT(t)
+	orig := prefix
+	prefix = "cloudctl"
+	t.Cleanup(func() { prefix = orig })
+
+	oldCfg := newCfg()
+	newCfg2 := newCfg()
+	newCfg2.Clusters["cloudctl:prod-eu-1"] = &clientcmdapi.Cluster{Server: "https://prod-eu-1.example.com"}
+
+	diff := diffKubeconfig(oldCfg, newCfg2)
+	g.Expect(diff.Clusters).To(HaveLen(1))
+	g.Expect(diff.Clusters[0].Name).To(Equal("cloudctl:prod-eu-1"))
+	g.Expect(diff.Clusters[0].ChangeType).To(Equal(DiffChangeAdded))
+}
+
+func TestDiffKubeconfig_RemovedCluster(t *testing.T) {
+	g := NewWithT(t)
+	orig := prefix
+	prefix = "cloudctl"
+	t.Cleanup(func() { prefix = orig })
+
+	oldCfg := newCfg()
+	oldCfg.Clusters["cloudctl:staging-de"] = &clientcmdapi.Cluster{Server: "https://staging.example.com"}
+	newCfg2 := newCfg()
+
+	diff := diffKubeconfig(oldCfg, newCfg2)
+	g.Expect(diff.Clusters).To(HaveLen(1))
+	g.Expect(diff.Clusters[0].Name).To(Equal("cloudctl:staging-de"))
+	g.Expect(diff.Clusters[0].ChangeType).To(Equal(DiffChangeRemoved))
+}
+
+func TestDiffKubeconfig_ModifiedClusterServerURL(t *testing.T) {
+	g := NewWithT(t)
+	orig := prefix
+	prefix = "cloudctl"
+	t.Cleanup(func() { prefix = orig })
+
+	oldCfg := newCfg()
+	oldCfg.Clusters["cloudctl:prod-eu-2"] = &clientcmdapi.Cluster{Server: "https://old.example.com"}
+	newCfg2 := newCfg()
+	newCfg2.Clusters["cloudctl:prod-eu-2"] = &clientcmdapi.Cluster{Server: "https://new.example.com"}
+
+	diff := diffKubeconfig(oldCfg, newCfg2)
+	g.Expect(diff.Clusters).To(HaveLen(1))
+	g.Expect(diff.Clusters[0].ChangeType).To(Equal(DiffChangeModified))
+	g.Expect(diff.Clusters[0].Fields).To(HaveLen(1))
+	g.Expect(diff.Clusters[0].Fields[0].Field).To(Equal("Server"))
+	g.Expect(diff.Clusters[0].Fields[0].Old).To(Equal("https://old.example.com"))
+	g.Expect(diff.Clusters[0].Fields[0].New).To(Equal("https://new.example.com"))
+}
+
+func TestDiffKubeconfig_ModifiedClusterCA(t *testing.T) {
+	g := NewWithT(t)
+	orig := prefix
+	prefix = "cloudctl"
+	t.Cleanup(func() { prefix = orig })
+
+	oldCfg := newCfg()
+	oldCfg.Clusters["cloudctl:prod"] = &clientcmdapi.Cluster{CertificateAuthorityData: []byte("old-ca-data")}
+	newCfg2 := newCfg()
+	newCfg2.Clusters["cloudctl:prod"] = &clientcmdapi.Cluster{CertificateAuthorityData: []byte("new-ca-data")}
+
+	diff := diffKubeconfig(oldCfg, newCfg2)
+	g.Expect(diff.Clusters).To(HaveLen(1))
+	g.Expect(diff.Clusters[0].ChangeType).To(Equal(DiffChangeModified))
+	caField := diff.Clusters[0].Fields[0]
+	g.Expect(caField.Field).To(Equal("CA"))
+	// Value should be a hex fingerprint, not raw bytes
+	g.Expect(caField.Old).To(HaveLen(16))
+	g.Expect(caField.New).To(HaveLen(16))
+	g.Expect(caField.Old).ToNot(Equal(caField.New))
+}
+
+func TestDiffKubeconfig_AddedContext(t *testing.T) {
+	g := NewWithT(t)
+	orig := prefix
+	prefix = "cloudctl"
+	t.Cleanup(func() { prefix = orig })
+
+	oldCfg := newCfg()
+	newCfg2 := newCfg()
+	newCfg2.Contexts["cloudctl:prod"] = &clientcmdapi.Context{Cluster: "cloudctl:prod", AuthInfo: "cloudctl:auth-abc"}
+
+	diff := diffKubeconfig(oldCfg, newCfg2)
+	g.Expect(diff.Contexts).To(HaveLen(1))
+	g.Expect(diff.Contexts[0].ChangeType).To(Equal(DiffChangeAdded))
+}
+
+func TestDiffKubeconfig_RemovedContext(t *testing.T) {
+	g := NewWithT(t)
+	orig := prefix
+	prefix = "cloudctl"
+	t.Cleanup(func() { prefix = orig })
+
+	oldCfg := newCfg()
+	oldCfg.Contexts["cloudctl:staging"] = &clientcmdapi.Context{Cluster: "cloudctl:staging"}
+	newCfg2 := newCfg()
+
+	diff := diffKubeconfig(oldCfg, newCfg2)
+	g.Expect(diff.Contexts).To(HaveLen(1))
+	g.Expect(diff.Contexts[0].ChangeType).To(Equal(DiffChangeRemoved))
+}
+
+func TestDiffKubeconfig_ModifiedAuthInfoExecArgs(t *testing.T) {
+	g := NewWithT(t)
+	orig := prefix
+	prefix = "cloudctl"
+	t.Cleanup(func() { prefix = orig })
+
+	oldCfg := newCfg()
+	oldCfg.AuthInfos["cloudctl:auth-abc123"] = &clientcmdapi.AuthInfo{
+		Exec: &clientcmdapi.ExecConfig{
+			Command: "kubelogin",
+			Args:    []string{"get-token", "--oidc-client-secret=old-secret"},
+		},
+	}
+	newCfg2 := newCfg()
+	newCfg2.AuthInfos["cloudctl:auth-abc123"] = &clientcmdapi.AuthInfo{
+		Exec: &clientcmdapi.ExecConfig{
+			Command: "kubelogin",
+			Args:    []string{"get-token", "--oidc-client-secret=new-secret"},
+		},
+	}
+
+	diff := diffKubeconfig(oldCfg, newCfg2)
+	g.Expect(diff.AuthInfos).To(HaveLen(1))
+	g.Expect(diff.AuthInfos[0].ChangeType).To(Equal(DiffChangeModified))
+	g.Expect(diff.AuthInfos[0].Fields).ToNot(BeEmpty())
+}
+
+func TestDiffKubeconfig_UnchangedEntriesExcluded(t *testing.T) {
+	g := NewWithT(t)
+	orig := prefix
+	prefix = "cloudctl"
+	t.Cleanup(func() { prefix = orig })
+
+	cfg := newCfg()
+	cfg.Clusters["cloudctl:unchanged"] = &clientcmdapi.Cluster{Server: "https://same.example.com"}
+
+	diff := diffKubeconfig(cfg, cfg)
+	g.Expect(diff.Clusters).To(BeEmpty(), "unchanged entries must not appear in diff")
+}
+
+func TestDiffKubeconfig_UnmanagedEntriesIgnored(t *testing.T) {
+	g := NewWithT(t)
+	orig := prefix
+	prefix = "cloudctl"
+	t.Cleanup(func() { prefix = orig })
+
+	oldCfg := newCfg()
+	oldCfg.Clusters["my-own-cluster"] = &clientcmdapi.Cluster{Server: "https://personal.example.com"}
+	newCfg2 := newCfg()
+	// unmanaged entry removed from new — must not appear in diff
+
+	diff := diffKubeconfig(oldCfg, newCfg2)
+	g.Expect(diff.Clusters).To(BeEmpty())
+	g.Expect(diff.Contexts).To(BeEmpty())
+	g.Expect(diff.AuthInfos).To(BeEmpty())
+}
+
+func TestRunSync_DryRun_NoWrite(t *testing.T) {
+	g := NewWithT(t)
+
+	orig := prefix
+	prefix = "cloudctl"
+	mergeIdenticalUsers = true
+	t.Cleanup(func() {
+		prefix = orig
+		mergeIdenticalUsers = true
+	})
+
+	// Build a "before" and "after" config to simulate what dry-run does
+	localConfigBefore := clientcmdapi.NewConfig()
+	localConfigBefore.Clusters["cloudctl:existing"] = &clientcmdapi.Cluster{Server: "https://existing.example.com"}
+
+	// Simulate an incoming server config that adds a new cluster
+	serverConfig := clientcmdapi.NewConfig()
+	serverConfig.Clusters["existing"] = &clientcmdapi.Cluster{Server: "https://existing.example.com"}
+	serverConfig.Clusters["new-cluster"] = &clientcmdapi.Cluster{Server: "https://new.example.com"}
+
+	localConfig := localConfigBefore.DeepCopy()
+	err := mergeKubeconfig(localConfig, serverConfig)
+	g.Expect(err).ToNot(HaveOccurred())
+
+	diff := diffKubeconfig(localConfigBefore, localConfig)
+	result := buildDryRunResult(diff)
+
+	// The new cluster should appear as added
+	g.Expect(result.Added).To(BeNumerically(">=", 1))
+	g.Expect(result.Clusters).To(ContainElement(
+		HaveField("ChangeType", "added"),
+	))
+
+	// Original localConfigBefore must not have been modified
+	g.Expect(localConfigBefore.Clusters).ToNot(HaveKey("cloudctl:new-cluster"))
+}

@@ -66,6 +66,50 @@ func (p *plainPrinter) Print(v any) error {
 			}
 		}
 
+	case SyncDryRunResult:
+		w("Dry-run: no changes will be written.\n\n")
+		total := t.Added + t.Removed + t.Modified
+		if total == 0 {
+			w("No changes detected.\n")
+			break
+		}
+		printDiffSection := func(title string, entries []DiffEntry) {
+			if len(entries) == 0 {
+				return
+			}
+			n := 0
+			for _, e := range entries {
+				if e.ChangeType != "" {
+					n++
+				}
+			}
+			w("%s (%d change(s))\n", title, n)
+			for _, e := range entries {
+				switch e.ChangeType {
+				case "added":
+					w("  + %s\n", e.Name)
+				case "removed":
+					w("  - %s\n", e.Name)
+				case "modified":
+					w("  ~ %s\n", e.Name)
+					for _, f := range e.Fields {
+						if f.Old != "" {
+							w("      %-12s  - %s\n", f.Field+":", f.Old)
+						}
+						if f.New != "" {
+							w("      %-12s  + %s\n", f.Field+":", f.New)
+						}
+					}
+				}
+			}
+			w("\n")
+		}
+		printDiffSection("CLUSTERS", t.Clusters)
+		printDiffSection("CONTEXTS", t.Contexts)
+		printDiffSection("AUTH INFOS", t.AuthInfos)
+		w("Summary: %d added, %d removed, %d modified. No changes will be written.\n",
+			t.Added, t.Removed, t.Modified)
+
 	case ClusterVersionResult:
 		w("Kubernetes version: %s\n", t.Version)
 

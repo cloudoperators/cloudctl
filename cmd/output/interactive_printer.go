@@ -94,6 +94,8 @@ func (p *interactivePrinter) Print(v any) error {
 	switch t := v.(type) {
 	case SyncResult:
 		writeErr = p.printSyncResult(t)
+	case SyncDryRunResult:
+		writeErr = p.printSyncDryRunResult(t)
 	case ClusterVersionResult:
 		w("%s %s\n", styleFaint.Render("Kubernetes version:"), styleBold.Render(t.Version))
 	case VersionInfo:
@@ -197,5 +199,65 @@ func (p *interactivePrinter) printSyncResult(r SyncResult) error {
 		}
 	}
 	w("%s\n", summary)
+	return writeErr
+}
+
+func (p *interactivePrinter) printSyncDryRunResult(r SyncDryRunResult) error {
+	var writeErr error
+	w := func(format string, a ...any) {
+		if writeErr != nil {
+			return
+		}
+		_, writeErr = fmt.Fprintf(p.w, format, a...)
+	}
+
+	w("%s\n\n", styleFaint.Render("Dry-run: no changes will be written."))
+
+	total := r.Added + r.Removed + r.Modified
+	if total == 0 {
+		w("%s\n", styleFaint.Render("No changes detected."))
+		return writeErr
+	}
+
+	printSection := func(title string, entries []DiffEntry) {
+		if len(entries) == 0 {
+			return
+		}
+		n := len(entries)
+		w("%s (%d change(s))\n", styleHeader.Render(title), n)
+		for _, e := range entries {
+			switch e.ChangeType {
+			case "added":
+				w("  %s %s\n", styleGreen.Render("+"), e.Name)
+			case "removed":
+				w("  %s %s\n", styleRed.Render("-"), e.Name)
+			case "modified":
+				w("  %s %s\n", styleYellow.Render("~"), e.Name)
+				for _, f := range e.Fields {
+					if f.Old != "" {
+						w("      %-12s  %s\n", f.Field+":", styleRed.Render("- "+f.Old))
+					}
+					if f.New != "" {
+						w("      %-12s  %s\n", f.Field+":", styleGreen.Render("+ "+f.New))
+					}
+				}
+			}
+		}
+		w("\n")
+	}
+
+	printSection("CLUSTERS", r.Clusters)
+	printSection("CONTEXTS", r.Contexts)
+	printSection("AUTH INFOS", r.AuthInfos)
+
+	summaryParts := []string{
+		styleGreen.Render(fmt.Sprintf("%d added", r.Added)),
+		styleRed.Render(fmt.Sprintf("%d removed", r.Removed)),
+		styleYellow.Render(fmt.Sprintf("%d modified", r.Modified)),
+	}
+	w("Summary: %s, %s, %s. %s\n",
+		summaryParts[0], summaryParts[1], summaryParts[2],
+		styleFaint.Render("No changes will be written."))
+
 	return writeErr
 }

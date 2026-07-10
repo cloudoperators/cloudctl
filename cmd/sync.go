@@ -10,11 +10,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	greenhousemetav1alpha1 "github.com/cloudoperators/greenhouse/api/meta/v1alpha1"
@@ -42,6 +40,7 @@ var (
 	kubeloginPath               string
 	kubeloginExtraArgs          []string
 	kubeloginTokenCacheDir      string
+	dryRun                      bool
 )
 
 func init() {
@@ -73,6 +72,8 @@ func init() {
 	}
 	syncCmd.Flags().StringVar(&kubeloginTokenCacheDir, "kubelogin-token-cache-dir", defaultTokenCacheDir, "Directory for OIDC token cache files")
 
+	syncCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview changes without writing to the kubeconfig file")
+
 	// BindPFlags can theroretically return an error if called with `nil` as an argument
 	// which should never happened after at least one flag was defined. That's why the output
 	// there is ignored.
@@ -102,6 +103,9 @@ Examples:
   # Use a dedicated Greenhouse kubeconfig and emit JSON output
   cloudctl sync -n my-org -k ~/.kube/greenhouse.yaml -o json
 
+  # Preview what would change without writing
+  cloudctl sync -n my-org --dry-run
+
   # Debug mode — shows every cluster/authinfo/context decision on stderr
   cloudctl sync -n my-org --log-level debug`,
 	RunE: runSync,
@@ -120,6 +124,7 @@ func runSync(cmd *cobra.Command, args []string) error {
 	kubeloginPath = viper.GetString("kubelogin-path")
 	kubeloginExtraArgs = viper.GetStringSlice("kubelogin-extra-args")
 	kubeloginTokenCacheDir = viper.GetString("kubelogin-token-cache-dir")
+	dryRun = viper.GetBool("dry-run")
 
 	format, err := output.ParseFormat(viper.GetString("output"))
 	if err != nil {
@@ -211,12 +216,24 @@ func runSync(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to create server config: %w", err)
 	}
 
-	stopMerge := printer.StartSpinner("Merging kubeconfigs...")
+	// Take a snapshot before merge for dry-run diff.
+	localConfigBefore := localConfig.DeepCopy()
+
+	spinnerLabel := "Merging kubeconfigs..."
+	if dryRun {
+		spinnerLabel = "Simulating merge (dry-run)..."
+	}
+	stopMerge := printer.StartSpinner(spinnerLabel)
 	err = mergeKubeconfig(localConfig, serverConfig)
 	stopMerge()
 	if err != nil {
 		_ = printer.Print(buildFailedSyncResult(ready, notReady, err))
 		return fmt.Errorf(`failed to merge ClusterKubeconfig: %w`, err)
+	}
+
+	if dryRun {
+		diff := diffKubeconfig(localConfigBefore, localConfig)
+		return printer.Print(buildDryRunResult(diff))
 	}
 
 	if writeErr := writeConfig(localConfig, remoteClusterKubeconfig); writeErr != nil {
@@ -408,119 +425,6 @@ func isManaged(name string) bool {
 	return strings.HasPrefix(name, prefix+":")
 }
 
-// authInfoEqual compares two AuthInfo objects, excluding "id-token" and "refresh-token".
-func authInfoEqual(a, b *clientcmdapi.AuthInfo) bool {
-	// Compare ClientCertificateData
-	if !bytes.Equal(a.ClientCertificateData, b.ClientCertificateData) {
-		return false
-	}
-
-	// Compare ClientKeyData
-	if !bytes.Equal(a.ClientKeyData, b.ClientKeyData) {
-		return false
-	}
-
-	// Compare Exec first (new style)
-	if (a.Exec == nil) != (b.Exec == nil) {
-		return false
-	}
-	if a.Exec != nil && b.Exec != nil {
-		if a.Exec.Command != b.Exec.Command || a.Exec.APIVersion != b.Exec.APIVersion {
-			return false
-		}
-		if len(a.Exec.Args) != len(b.Exec.Args) {
-			return false
-		}
-		for i := range a.Exec.Args {
-			if a.Exec.Args[i] != b.Exec.Args[i] {
-				return false
-			}
-		}
-		return true
-	}
-
-	// Compare AuthProvider, excluding "id-token" and "refresh-token"
-	if (a.AuthProvider == nil) != (b.AuthProvider == nil) {
-		return false
-	}
-	if a.AuthProvider != nil && b.AuthProvider != nil {
-		// Compare AuthProvider Name
-		if a.AuthProvider.Name != b.AuthProvider.Name {
-			return false
-		}
-
-		// Compare AuthProvider Config excluding "id-token" and "refresh-token"
-		aConfigFiltered := filterAuthProviderConfig(a.AuthProvider.Config)
-		bConfigFiltered := filterAuthProviderConfig(b.AuthProvider.Config)
-		if !maps.Equal(aConfigFiltered, bConfigFiltered) {
-			return false
-		}
-	}
-
-	return true
-}
-
-// filterAuthProviderConfig returns a copy of the config map excluding "id-token" and "refresh-token".
-func filterAuthProviderConfig(config map[string]string) map[string]string {
-	filtered := make(map[string]string)
-	for k, v := range config {
-		if k != "id-token" && k != "refresh-token" {
-			filtered[k] = v
-		}
-	}
-	return filtered
-}
-
-// generateAuthInfoKey creates a unique key for an AuthInfo based on specific AuthProvider fields,
-// excluding "id-token" and "refresh-token". It uses "client-id", "client-secret",
-// "auth-request-extra-params", and "extra-scopes" to generate the key.
-func generateAuthInfoKey(authInfo *clientcmdapi.AuthInfo) string {
-	// Exec-based key: derive from stable subset of args to avoid including tokens
-	if authInfo.Exec != nil {
-		// Extract known kubelogin flags
-		var issuer, clientID, clientSecret, extraParams string
-		var scopes []string
-		for _, arg := range authInfo.Exec.Args {
-			switch {
-			case strings.HasPrefix(arg, "--oidc-issuer-url="):
-				issuer = strings.TrimPrefix(arg, "--oidc-issuer-url=")
-			case strings.HasPrefix(arg, "--oidc-client-id="):
-				clientID = strings.TrimPrefix(arg, "--oidc-client-id=")
-			case strings.HasPrefix(arg, "--oidc-client-secret="):
-				clientSecret = strings.TrimPrefix(arg, "--oidc-client-secret=")
-			case strings.HasPrefix(arg, "--oidc-extra-scope="):
-				scopes = append(scopes, strings.TrimPrefix(arg, "--oidc-extra-scope="))
-			case strings.HasPrefix(arg, "--oidc-auth-request-extra-params="):
-				extraParams = strings.TrimPrefix(arg, "--oidc-auth-request-extra-params=")
-			}
-		}
-		sort.Strings(scopes)
-		data := fmt.Sprintf("exec:issuer:%s;client-id:%s;client-secret:%s;extra-params:%s;scopes:%s", issuer, clientID, clientSecret, extraParams, strings.Join(scopes, ","))
-		return data
-	}
-
-	if authInfo.AuthProvider == nil {
-		// For AuthInfos without AuthProvider, use a different unique identifier
-		// Here, we'll use the hash of ClientCertificateData and ClientKeyData
-		h := sha256.New()
-		h.Write(authInfo.ClientCertificateData)
-		h.Write(authInfo.ClientKeyData)
-		return fmt.Sprintf("cert:%s", hex.EncodeToString(h.Sum(nil)))
-	}
-
-	// Extract the required fields from AuthProvider Config
-	clientID := authInfo.AuthProvider.Config["client-id"]
-	clientSecret := authInfo.AuthProvider.Config["client-secret"]
-	authRequestExtraParams := authInfo.AuthProvider.Config["auth-request-extra-params"]
-	extraScopes := authInfo.AuthProvider.Config["extra-scopes"]
-
-	// Concatenate the fields in a consistent order
-	data := fmt.Sprintf("client-id:%s;client-secret:%s;auth-request-extra-params:%s;extra-scopes:%s",
-		clientID, clientSecret, authRequestExtraParams, extraScopes)
-
-	return data
-}
-
 // buildKubeloginArgs constructs kubelogin arguments from an oidc auth-provider config and extra args
 func buildKubeloginArgs(cfg map[string]string, extra []string, tokenCacheDir string) []string {
 	args := []string{"get-token"}
@@ -590,20 +494,32 @@ func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdap
 	var authInfoMap map[string]string // key: unique identifier, value: managed AuthInfo name
 	if mergeIdenticalUsers {
 		authInfoMap = make(map[string]string)
-	}
 
-	// Merge AuthInfos
-	for serverName, serverAuth := range serverConfig.AuthInfos {
-		var managedAuthName string
+		// Build a reverse lookup of unmanaged local auth entries so we can reuse their names
+		// instead of creating new cloudctl:auth-<hash> entries.
+		existingLocalKeys := make(map[string]string) // authInfoKey → local name
+		for localName, localAuth := range localConfig.AuthInfos {
+			if !isManaged(localName) {
+				existingLocalKeys[generateAuthInfoKey(localAuth)] = localName
+			}
+		}
 
-		if mergeIdenticalUsers {
-			// Generate a unique key based on AuthInfo excluding id-token and refresh-token
+		// Merge AuthInfos
+		for serverName, serverAuth := range serverConfig.AuthInfos {
 			uniqueKey := generateAuthInfoKey(serverAuth)
+
+			// If an unmanaged local entry has the same credentials, reuse its name.
+			if localName, found := existingLocalKeys[uniqueKey]; found {
+				slog.Debug("reusing existing local authinfo", "name", localName, "server", serverName)
+				authInfoMap[uniqueKey] = localName
+				continue
+			}
+
 			hash := sha256.Sum256([]byte(uniqueKey))
 			hashString := hex.EncodeToString(hash[:])[:16] // Using the first 16 chars for brevity
-			managedAuthName = fmt.Sprintf("%s:auth-%s", prefix, hashString)
+			managedAuthName := fmt.Sprintf("%s:auth-%s", prefix, hashString)
 
-			// **Merge AuthInfo to preserve id-token and refresh-token**
+			// Merge AuthInfo to preserve id-token and refresh-token
 			if existingAuth, exists := localConfig.AuthInfos[managedAuthName]; exists {
 				slog.Debug("merging authinfo tokens", "name", managedAuthName, "server", serverName)
 				mergedAuth := mergeAuthInfo(serverAuth, existingAuth)
@@ -614,16 +530,18 @@ func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdap
 			}
 
 			authInfoMap[uniqueKey] = managedAuthName
-		} else {
-			// Without merging, manage AuthInfos normally
-			managedAuthName = managedNameFunc(serverName)
+		}
+	} else {
+		// Without merging, manage AuthInfos normally
+		for serverName, serverAuth := range serverConfig.AuthInfos {
+			managedAuthName := managedNameFunc(serverName)
 			localAuth, exists := localConfig.AuthInfos[managedAuthName]
 			if !exists {
 				slog.Debug("adding authinfo", "name", managedAuthName)
 				localConfig.AuthInfos[managedAuthName] = serverAuth
 			} else {
 				if !authInfoEqual(localAuth, serverAuth) {
-					// **Merge AuthInfo to preserve id-token and refresh-token**
+					// Merge AuthInfo to preserve id-token and refresh-token
 					slog.Debug("updating authinfo", "name", managedAuthName)
 					mergedAuth := mergeAuthInfo(serverAuth, localAuth)
 					localConfig.AuthInfos[managedAuthName] = mergedAuth
@@ -764,36 +682,6 @@ func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdap
 	}
 
 	return nil
-}
-
-// Helper function to merge AuthInfo objects while preserving id-token and refresh-token
-func mergeAuthInfo(serverAuth, localAuth *clientcmdapi.AuthInfo) *clientcmdapi.AuthInfo {
-	if localAuth == nil {
-		// If there's no local AuthInfo, return the server AuthInfo as is
-		return serverAuth
-	}
-
-	// Create a copy of the serverAuth to avoid mutating the original
-	mergedAuth := serverAuth.DeepCopy()
-
-	// Preserve id-token and refresh-token from localAuth
-	if localAuth.AuthProvider != nil && mergedAuth.AuthProvider != nil {
-		// Ensure the merged config map is initialized to avoid panics on assignment
-		if mergedAuth.AuthProvider.Config == nil {
-			mergedAuth.AuthProvider.Config = make(map[string]string)
-		}
-		if idToken, exists := localAuth.AuthProvider.Config["id-token"]; exists {
-			mergedAuth.AuthProvider.Config["id-token"] = idToken
-		}
-		if refreshToken, exists := localAuth.AuthProvider.Config["refresh-token"]; exists {
-			mergedAuth.AuthProvider.Config["refresh-token"] = refreshToken
-		}
-	}
-
-	// Additionally, preserve other fields if necessary.
-	// For example, ClientCertificateData and ClientKeyData are already handled
-
-	return mergedAuth
 }
 
 // labelsExtensionEqual returns true if the "labels" named extension is equal in both maps.
