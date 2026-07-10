@@ -221,7 +221,16 @@ func (p *interactivePrinter) printSyncDryRunResult(r SyncDryRunResult) error {
 	w("%s\n\n", styleFaint.Render("Dry-run: no changes will be written."))
 	w("%s (%d change(s))\n", styleHeader.Render("CLUSTER ACCESSES"), total)
 
-	// Determine column width for the name column.
+	if r.Format == "diff" {
+		p.printDryRunDiff(w, r)
+	} else {
+		p.printDryRunTable(w, r)
+	}
+
+	return writeErr
+}
+
+func (p *interactivePrinter) printDryRunTable(w func(string, ...any), r SyncDryRunResult) {
 	nameWidth := len("NAME")
 	for _, a := range r.Accesses {
 		if len(a.Name) > nameWidth {
@@ -230,7 +239,6 @@ func (p *interactivePrinter) printSyncDryRunResult(r SyncDryRunResult) error {
 	}
 	nameWidth += 2
 
-	// Print added/removed entries with server URL inline.
 	hasAddedOrRemoved := r.Added > 0 || r.Removed > 0
 	if hasAddedOrRemoved {
 		w("  %-*s  %s\n", nameWidth, styleBold.Render("NAME"), styleBold.Render("SERVER"))
@@ -244,9 +252,6 @@ func (p *interactivePrinter) printSyncDryRunResult(r SyncDryRunResult) error {
 		}
 	}
 
-	// Print modified entries. Entries with only credential changes are
-	// shown as compact single-line table rows. Entries with field-level
-	// values (server, ca, etc.) expand with old → new detail lines.
 	if r.Modified > 0 {
 		if hasAddedOrRemoved {
 			w("\n")
@@ -284,12 +289,50 @@ func (p *interactivePrinter) printSyncDryRunResult(r SyncDryRunResult) error {
 		}
 	}
 
-	w("\n")
+	p.printDryRunSummary(w, r)
+}
+
+func (p *interactivePrinter) printDryRunDiff(w func(string, ...any), r SyncDryRunResult) {
+	for _, a := range r.Accesses {
+		switch a.ChangeType {
+		case "added":
+			w("%s %s\n", styleGreen.Render("+"), a.Name)
+			if a.Server != "" {
+				w("  %s %-12s  %s\n", styleGreen.Render("+"), "server:", a.Server)
+			}
+		case "removed":
+			w("%s %s\n", styleRed.Render("-"), a.Name)
+			if a.Server != "" {
+				w("  %s %-12s  %s\n", styleRed.Render("-"), "server:", a.Server)
+			}
+		case "modified":
+			w("%s %s\n", styleYellow.Render("~"), a.Name)
+			for _, f := range a.Fields {
+				if f.Field == "Credentials" {
+					w("  %s %-12s  %s\n", styleYellow.Render("~"), "credentials:", styleYellow.Render("changed"))
+				} else {
+					label := strings.ToLower(f.Field) + ":"
+					if f.Old != "" {
+						w("  %s %-12s  %s\n", styleRed.Render("-"), label, styleRed.Render(f.Old))
+					}
+					if f.New != "" {
+						w("  %s %-12s  %s\n", styleGreen.Render("+"), label, styleGreen.Render(f.New))
+					}
+				}
+			}
+		}
+	}
+
+	p.printDryRunSummary(w, r)
+}
+
+func (p *interactivePrinter) printDryRunSummary(w func(string, ...any), r SyncDryRunResult) {
 	modBreakdown := modifiedBreakdown(r.Accesses)
 	modSuffix := ""
 	if r.Modified > 0 && len(modBreakdown) > 0 {
 		modSuffix = " (" + strings.Join(modBreakdown, ", ") + ")"
 	}
+	w("\n")
 	summaryParts := []string{
 		styleGreen.Render(fmt.Sprintf("%d added", r.Added)),
 		styleRed.Render(fmt.Sprintf("%d removed", r.Removed)),
@@ -298,6 +341,4 @@ func (p *interactivePrinter) printSyncDryRunResult(r SyncDryRunResult) error {
 	w("Summary: %s, %s, %s. %s\n",
 		summaryParts[0], summaryParts[1], summaryParts[2],
 		styleFaint.Render("No changes will be written."))
-
-	return writeErr
 }

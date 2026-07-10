@@ -41,6 +41,7 @@ var (
 	kubeloginExtraArgs          []string
 	kubeloginTokenCacheDir      string
 	dryRun                      bool
+	dryRunFormat                string
 )
 
 func init() {
@@ -73,6 +74,7 @@ func init() {
 	syncCmd.Flags().StringVar(&kubeloginTokenCacheDir, "kubelogin-token-cache-dir", defaultTokenCacheDir, "Directory for OIDC token cache files")
 
 	syncCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview changes without writing to the kubeconfig file")
+	syncCmd.Flags().StringVar(&dryRunFormat, "dry-run-format", "table", "Dry-run display style: table (default) or diff (git-style old/new lines)")
 
 	// BindPFlags can theroretically return an error if called with `nil` as an argument
 	// which should never happened after at least one flag was defined. That's why the output
@@ -125,6 +127,7 @@ func runSync(cmd *cobra.Command, args []string) error {
 	kubeloginExtraArgs = viper.GetStringSlice("kubelogin-extra-args")
 	kubeloginTokenCacheDir = viper.GetString("kubelogin-token-cache-dir")
 	dryRun = viper.GetBool("dry-run")
+	dryRunFormat = viper.GetString("dry-run-format")
 
 	format, err := output.ParseFormat(viper.GetString("output"))
 	if err != nil {
@@ -233,7 +236,9 @@ func runSync(cmd *cobra.Command, args []string) error {
 
 	if dryRun {
 		diff := diffKubeconfig(localConfigBefore, localConfig)
-		return printer.Print(buildDryRunResult(diff, localConfigBefore, localConfig))
+		result := buildDryRunResult(diff, localConfigBefore, localConfig)
+		result.Format = dryRunFormat
+		return printer.Print(result)
 	}
 
 	if writeErr := writeConfig(localConfig, remoteClusterKubeconfig); writeErr != nil {
