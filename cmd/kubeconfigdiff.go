@@ -577,9 +577,10 @@ func buildAccessDiffs(diff KubeconfigDiff, oldCfg, newCfg *clientcmdapi.Config) 
 		}
 	}
 
-	// Flatten and sort
+	// Flatten, deduplicate fields, and sort
 	accesses := make([]output.AccessDiff, 0, len(byName))
 	for _, e := range byName {
+		e.access.Fields = deduplicateFieldChanges(e.access.Fields)
 		accesses = append(accesses, e.access)
 	}
 	sort.Slice(accesses, func(i, j int) bool { return accesses[i].Name < accesses[j].Name })
@@ -647,4 +648,24 @@ func sortedKeys(a, b map[string]string) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// deduplicateFieldChanges removes duplicate FieldChange entries, preserving order.
+// Duplicates can arise when multiple diff sources (context, cluster, authinfo) all
+// contribute the same field change to the same access entry.
+func deduplicateFieldChanges(fields []output.FieldChange) []output.FieldChange {
+	if len(fields) <= 1 {
+		return fields
+	}
+	type key struct{ field, old, new string }
+	seen := make(map[key]struct{}, len(fields))
+	out := fields[:0:0]
+	for _, f := range fields {
+		k := key{f.Field, f.Old, f.New}
+		if _, dup := seen[k]; !dup {
+			seen[k] = struct{}{}
+			out = append(out, f)
+		}
+	}
+	return out
 }

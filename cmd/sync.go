@@ -509,10 +509,18 @@ func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdap
 			uniqueKey := generateAuthInfoKey(serverAuth)
 
 			// If an unmanaged local entry has the same credentials, reuse its name.
+			// Gate on authInfoEqual (excluding tokens) so we don't rewire a context
+			// to an unmanaged entry whose non-OIDC fields differ from the server config.
 			if localName, found := existingLocalKeys[uniqueKey]; found {
-				slog.Debug("reusing existing local authinfo", "name", localName, "server", serverName)
-				authInfoMap[uniqueKey] = localName
-				continue
+				localAuth := localConfig.AuthInfos[localName]
+				if authInfoEqual(localAuth, serverAuth) {
+					slog.Debug("reusing existing local authinfo", "name", localName, "server", serverName)
+					// Merge server config into the local entry to pick up any server-side
+					// changes while preserving local tokens.
+					localConfig.AuthInfos[localName] = mergeAuthInfo(serverAuth, localAuth)
+					authInfoMap[uniqueKey] = localName
+					continue
+				}
 			}
 
 			hash := sha256.Sum256([]byte(uniqueKey))
