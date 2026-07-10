@@ -6,6 +6,7 @@ package output
 import (
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"time"
 
@@ -220,34 +221,63 @@ func (p *interactivePrinter) printSyncDryRunResult(r SyncDryRunResult) error {
 	w("%s\n\n", styleFaint.Render("Dry-run: no changes will be written."))
 	w("%s (%d change(s))\n", styleHeader.Render("CLUSTER ACCESSES"), total)
 
+	// Determine column width for the name column.
+	nameWidth := len("NAME")
 	for _, a := range r.Accesses {
-		switch a.ChangeType {
-		case "added":
-			w("  %s %-20s  %s\n", styleGreen.Render("+"), a.Name, styleFaint.Render(a.Server))
-		case "removed":
-			w("  %s %-20s  %s\n", styleRed.Render("-"), a.Name, styleFaint.Render("(removed)"))
-		case "modified":
-			w("  %s %s\n", styleYellow.Render("~"), a.Name)
-			for _, f := range a.Fields {
-				if f.Field == "Credentials" {
-					w("      %-16s  %s\n", "Credentials:", styleYellow.Render("changed"))
-				} else {
-					if f.Old != "" {
-						w("      %-16s  %s\n", f.Field+":", styleRed.Render("- "+f.Old))
-					}
-					if f.New != "" {
-						w("      %-16s  %s\n", f.Field+":", styleGreen.Render("+ "+f.New))
-					}
-				}
+		if len(a.Name) > nameWidth {
+			nameWidth = len(a.Name)
+		}
+	}
+	nameWidth += 2
+
+	// Print added/removed entries with server URL inline.
+	hasAddedOrRemoved := r.Added > 0 || r.Removed > 0
+	if hasAddedOrRemoved {
+		w("  %-*s  %s\n", nameWidth, styleBold.Render("NAME"), styleBold.Render("SERVER"))
+		for _, a := range r.Accesses {
+			switch a.ChangeType {
+			case "added":
+				w("  %s %-*s  %s\n", styleGreen.Render("+"), nameWidth, a.Name, styleFaint.Render(a.Server))
+			case "removed":
+				w("  %s %-*s  %s\n", styleRed.Render("-"), nameWidth, a.Name, styleFaint.Render("(removed)"))
 			}
 		}
 	}
 
+	// Print modified entries as a table with a CHANGES column.
+	if r.Modified > 0 {
+		if hasAddedOrRemoved {
+			w("\n")
+		}
+		w("  %-*s  %s\n", nameWidth, styleBold.Render("NAME"), styleBold.Render("CHANGES"))
+		for _, a := range r.Accesses {
+			if a.ChangeType != "modified" {
+				continue
+			}
+			summary := accessChangeSummary(a)
+			var styledSummary string
+			switch summary {
+			case "credentials":
+				styledSummary = styleYellow.Render(summary)
+			case "server", "ca":
+				styledSummary = styleRed.Render(summary)
+			default:
+				styledSummary = styleFaint.Render(summary)
+			}
+			w("  %s %-*s  %s\n", styleYellow.Render("~"), nameWidth, a.Name, styledSummary)
+		}
+	}
+
 	w("\n")
+	modBreakdown := modifiedBreakdown(r.Accesses)
+	modSuffix := ""
+	if r.Modified > 0 && len(modBreakdown) > 0 {
+		modSuffix = " (" + strings.Join(modBreakdown, ", ") + ")"
+	}
 	summaryParts := []string{
 		styleGreen.Render(fmt.Sprintf("%d added", r.Added)),
 		styleRed.Render(fmt.Sprintf("%d removed", r.Removed)),
-		styleYellow.Render(fmt.Sprintf("%d modified", r.Modified)),
+		styleYellow.Render(fmt.Sprintf("%d modified%s", r.Modified, modSuffix)),
 	}
 	w("Summary: %s, %s, %s. %s\n",
 		summaryParts[0], summaryParts[1], summaryParts[2],

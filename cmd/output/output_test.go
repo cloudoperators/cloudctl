@@ -243,8 +243,7 @@ func TestPlainPrinter_SyncDryRunResult_Changes(t *testing.T) {
 	g.Expect(out).To(ContainSubstring("https://prod-eu-1.example.com"))
 	g.Expect(out).To(ContainSubstring("- staging-de"))
 	g.Expect(out).To(ContainSubstring("~ prod-eu-2"))
-	g.Expect(out).To(ContainSubstring("https://old.example.com"))
-	g.Expect(out).To(ContainSubstring("https://new.example.com"))
+	g.Expect(out).To(ContainSubstring("server")) // change summary column
 	g.Expect(out).To(ContainSubstring("Summary:"))
 	g.Expect(out).To(ContainSubstring("1 added"))
 	g.Expect(out).To(ContainSubstring("1 removed"))
