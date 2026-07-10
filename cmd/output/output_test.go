@@ -220,13 +220,14 @@ func TestPlainPrinter_SyncDryRunResult_Changes(t *testing.T) {
 	p := output.New(output.FormatText, false, &buf)
 
 	result := output.SyncDryRunResult{
-		Clusters: []output.DiffEntry{
-			{Name: "cloudctl:prod-eu-1", ChangeType: "added"},
-			{Name: "cloudctl:staging-de", ChangeType: "removed"},
-			{Name: "cloudctl:prod-eu-2", ChangeType: "modified", Fields: []output.FieldChange{
+		Accesses: []output.AccessDiff{
+			{Name: "prod-eu-1", ChangeType: "added", Server: "https://prod-eu-1.example.com"},
+			{Name: "staging-de", ChangeType: "removed", Server: "https://staging.example.com"},
+			{Name: "prod-eu-2", ChangeType: "modified", Fields: []output.FieldChange{
 				{Field: "Server", Old: "https://old.example.com", New: "https://new.example.com"},
 			}},
 		},
+		Clusters:  []output.DiffEntry{},
 		Contexts:  []output.DiffEntry{},
 		AuthInfos: []output.DiffEntry{},
 		Added:     1,
@@ -237,9 +238,11 @@ func TestPlainPrinter_SyncDryRunResult_Changes(t *testing.T) {
 
 	out := buf.String()
 	g.Expect(out).To(ContainSubstring("Dry-run: no changes will be written."))
-	g.Expect(out).To(ContainSubstring("+ cloudctl:prod-eu-1"))
-	g.Expect(out).To(ContainSubstring("- cloudctl:staging-de"))
-	g.Expect(out).To(ContainSubstring("~ cloudctl:prod-eu-2"))
+	g.Expect(out).To(ContainSubstring("CLUSTER ACCESSES"))
+	g.Expect(out).To(ContainSubstring("+ prod-eu-1"))
+	g.Expect(out).To(ContainSubstring("https://prod-eu-1.example.com"))
+	g.Expect(out).To(ContainSubstring("- staging-de"))
+	g.Expect(out).To(ContainSubstring("~ prod-eu-2"))
 	g.Expect(out).To(ContainSubstring("https://old.example.com"))
 	g.Expect(out).To(ContainSubstring("https://new.example.com"))
 	g.Expect(out).To(ContainSubstring("Summary:"))

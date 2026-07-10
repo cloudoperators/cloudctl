@@ -103,12 +103,26 @@ func diffClusters(oldCfg, newCfg *clientcmdapi.Config) []EntryDiff {
 	return diffs
 }
 
-// diffContexts returns added/removed/modified context entries for managed names.
+// isManagedContext returns true if the context at name references a managed cluster
+// (i.e. a cluster whose name has the managed prefix). Context names themselves are
+// stored without the prefix, so we check the cluster reference instead.
+func isManagedContext(name string, oldCfg, newCfg *clientcmdapi.Config) bool {
+	if ctx, ok := newCfg.Contexts[name]; ok {
+		return isManaged(ctx.Cluster)
+	}
+	if ctx, ok := oldCfg.Contexts[name]; ok {
+		return isManaged(ctx.Cluster)
+	}
+	return false
+}
+
+// diffContexts returns added/removed/modified context entries for managed contexts.
+// A context is considered managed if its cluster reference carries the managed prefix.
 func diffContexts(oldCfg, newCfg *clientcmdapi.Config) []EntryDiff {
 	var diffs []EntryDiff
 
 	for name, newCtx := range newCfg.Contexts {
-		if !isManaged(name) {
+		if !isManagedContext(name, oldCfg, newCfg) {
 			continue
 		}
 		oldCtx, exists := oldCfg.Contexts[name]
@@ -132,7 +146,7 @@ func diffContexts(oldCfg, newCfg *clientcmdapi.Config) []EntryDiff {
 	}
 
 	for name := range oldCfg.Contexts {
-		if !isManaged(name) {
+		if !isManagedContext(name, oldCfg, newCfg) {
 			continue
 		}
 		if _, exists := newCfg.Contexts[name]; !exists {
@@ -277,30 +291,151 @@ func toOutputDiffEntries(diffs []EntryDiff) []output.DiffEntry {
 	return result
 }
 
-// buildDryRunResult converts a KubeconfigDiff to an output.SyncDryRunResult.
-func buildDryRunResult(diff KubeconfigDiff) output.SyncDryRunResult {
-	var added, removed, modified int
-	countChanges := func(entries []EntryDiff) {
-		for _, e := range entries {
-			switch e.ChangeType {
-			case DiffChangeAdded:
-				added++
-			case DiffChangeRemoved:
-				removed++
-			case DiffChangeModified:
-				modified++
+// buildAccessDiffs derives a []output.AccessDiff from the context-level diff,
+// enriching each entry with the server URL (looked up from the cluster the
+// context references) and credential-change information.
+// It also synthesises modified access entries for contexts whose underlying
+// cluster changed server URL or CA (tracked in diff.Clusters) even when the
+// context itself was not structurally modified.
+func buildAccessDiffs(diff KubeconfigDiff, oldCfg, newCfg *clientcmdapi.Config) []output.AccessDiff {
+	// accesses keyed by context name to allow merging
+	type accessEntry struct {
+		access  output.AccessDiff
+		fromCtx bool // originated from a context-level diff
+	}
+	byName := make(map[string]*accessEntry)
+
+	// 1. Process explicit context-level diffs (added / removed / modified context refs)
+	for _, ctxDiff := range diff.Contexts {
+		name := ctxDiff.Name
+		entry := &accessEntry{
+			access: output.AccessDiff{
+				Name:       name,
+				ChangeType: string(ctxDiff.ChangeType),
+			},
+			fromCtx: true,
+		}
+
+		switch ctxDiff.ChangeType {
+		case DiffChangeAdded:
+			if ctx, ok := newCfg.Contexts[name]; ok {
+				if cluster, ok := newCfg.Clusters[ctx.Cluster]; ok {
+					entry.access.Server = cluster.Server
+				}
+			}
+		case DiffChangeRemoved:
+			if ctx, ok := oldCfg.Contexts[name]; ok {
+				if cluster, ok := oldCfg.Clusters[ctx.Cluster]; ok {
+					entry.access.Server = cluster.Server
+				}
+			}
+		case DiffChangeModified:
+			oldCtx := oldCfg.Contexts[name]
+			newCtx := newCfg.Contexts[name]
+			if oldCtx != nil && newCtx != nil {
+				oldCluster := oldCfg.Clusters[oldCtx.Cluster]
+				newCluster := newCfg.Clusters[newCtx.Cluster]
+				oldServer, newServer := "", ""
+				if oldCluster != nil {
+					oldServer = oldCluster.Server
+				}
+				if newCluster != nil {
+					newServer = newCluster.Server
+				}
+				if oldServer != newServer {
+					entry.access.Fields = append(entry.access.Fields, output.FieldChange{
+						Field: "Server",
+						Old:   oldServer,
+						New:   newServer,
+					})
+				}
+				// Check if credentials changed
+				oldAuth := oldCfg.AuthInfos[oldCtx.AuthInfo]
+				newAuth := newCfg.AuthInfos[newCtx.AuthInfo]
+				if (oldAuth != nil && newAuth != nil && !authInfoEqual(oldAuth, newAuth)) ||
+					(oldAuth == nil) != (newAuth == nil) {
+					entry.access.Fields = append(entry.access.Fields, output.FieldChange{Field: "Credentials", Old: "changed", New: ""})
+				}
+			}
+		}
+		byName[name] = entry
+	}
+
+	// 2. For each modified cluster, find contexts in newCfg that reference it.
+	// If those contexts were not already captured via context-level diffs, add
+	// a "modified" access entry for the server URL change.
+	modifiedClusters := make(map[string]EntryDiff, len(diff.Clusters))
+	for _, cd := range diff.Clusters {
+		if cd.ChangeType == DiffChangeModified {
+			modifiedClusters[cd.Name] = cd
+		}
+	}
+	if len(modifiedClusters) > 0 {
+		for ctxName, ctx := range newCfg.Contexts {
+			if _, alreadyHandled := byName[ctxName]; alreadyHandled {
+				continue
+			}
+			clusterDiff, affected := modifiedClusters[ctx.Cluster]
+			if !affected {
+				continue
+			}
+			var fields []output.FieldChange
+			for _, f := range clusterDiff.Fields {
+				if f.Field == "Server" {
+					fields = append(fields, output.FieldChange{
+						Field: "Server",
+						Old:   f.Old,
+						New:   f.New,
+					})
+				}
+			}
+			if len(fields) == 0 {
+				continue
+			}
+			byName[ctxName] = &accessEntry{
+				access: output.AccessDiff{
+					Name:       ctxName,
+					ChangeType: string(DiffChangeModified),
+					Fields:     fields,
+				},
 			}
 		}
 	}
-	countChanges(diff.Clusters)
-	countChanges(diff.Contexts)
-	countChanges(diff.AuthInfos)
+
+	// Flatten and sort
+	accesses := make([]output.AccessDiff, 0, len(byName))
+	for _, e := range byName {
+		accesses = append(accesses, e.access)
+	}
+	sort.Slice(accesses, func(i, j int) bool { return accesses[i].Name < accesses[j].Name })
+	return accesses
+}
+
+// buildDryRunResult converts a KubeconfigDiff to an output.SyncDryRunResult.
+// oldCfg and newCfg are needed to build the context-centric AccessDiff entries.
+func buildDryRunResult(diff KubeconfigDiff, oldCfg, newCfg *clientcmdapi.Config) output.SyncDryRunResult {
+	accesses := buildAccessDiffs(diff, oldCfg, newCfg)
+
+	var added, removed, modified int
+	for _, a := range accesses {
+		switch DiffChangeType(a.ChangeType) {
+		case DiffChangeAdded:
+			added++
+		case DiffChangeRemoved:
+			removed++
+		case DiffChangeModified:
+			modified++
+		}
+	}
 
 	clusters := toOutputDiffEntries(diff.Clusters)
 	contexts := toOutputDiffEntries(diff.Contexts)
 	authInfos := toOutputDiffEntries(diff.AuthInfos)
 
 	// Use empty slices instead of nil for consistent JSON/YAML output
+	if accesses == nil {
+		accesses = []output.AccessDiff{}
+	}
 	if clusters == nil {
 		clusters = []output.DiffEntry{}
 	}
@@ -312,6 +447,7 @@ func buildDryRunResult(diff KubeconfigDiff) output.SyncDryRunResult {
 	}
 
 	return output.SyncDryRunResult{
+		Accesses:  accesses,
 		Clusters:  clusters,
 		Contexts:  contexts,
 		AuthInfos: authInfos,

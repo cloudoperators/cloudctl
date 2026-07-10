@@ -211,45 +211,39 @@ func (p *interactivePrinter) printSyncDryRunResult(r SyncDryRunResult) error {
 		_, writeErr = fmt.Fprintf(p.w, format, a...)
 	}
 
-	w("%s\n\n", styleFaint.Render("Dry-run: no changes will be written."))
-
 	total := r.Added + r.Removed + r.Modified
 	if total == 0 {
 		w("%s\n", styleFaint.Render("No changes detected."))
 		return writeErr
 	}
 
-	printSection := func(title string, entries []DiffEntry) {
-		if len(entries) == 0 {
-			return
-		}
-		n := len(entries)
-		w("%s (%d change(s))\n", styleHeader.Render(title), n)
-		for _, e := range entries {
-			switch e.ChangeType {
-			case "added":
-				w("  %s %s\n", styleGreen.Render("+"), e.Name)
-			case "removed":
-				w("  %s %s\n", styleRed.Render("-"), e.Name)
-			case "modified":
-				w("  %s %s\n", styleYellow.Render("~"), e.Name)
-				for _, f := range e.Fields {
+	w("%s\n\n", styleFaint.Render("Dry-run: no changes will be written."))
+	w("%s (%d change(s))\n", styleHeader.Render("CLUSTER ACCESSES"), total)
+
+	for _, a := range r.Accesses {
+		switch a.ChangeType {
+		case "added":
+			w("  %s %-20s  %s\n", styleGreen.Render("+"), a.Name, styleFaint.Render(a.Server))
+		case "removed":
+			w("  %s %-20s  %s\n", styleRed.Render("-"), a.Name, styleFaint.Render("(removed)"))
+		case "modified":
+			w("  %s %s\n", styleYellow.Render("~"), a.Name)
+			for _, f := range a.Fields {
+				if f.Field == "Credentials" {
+					w("      %-16s  %s\n", "Credentials:", styleYellow.Render("changed"))
+				} else {
 					if f.Old != "" {
-						w("      %-12s  %s\n", f.Field+":", styleRed.Render("- "+f.Old))
+						w("      %-16s  %s\n", f.Field+":", styleRed.Render("- "+f.Old))
 					}
 					if f.New != "" {
-						w("      %-12s  %s\n", f.Field+":", styleGreen.Render("+ "+f.New))
+						w("      %-16s  %s\n", f.Field+":", styleGreen.Render("+ "+f.New))
 					}
 				}
 			}
 		}
-		w("\n")
 	}
 
-	printSection("CLUSTERS", r.Clusters)
-	printSection("CONTEXTS", r.Contexts)
-	printSection("AUTH INFOS", r.AuthInfos)
-
+	w("\n")
 	summaryParts := []string{
 		styleGreen.Render(fmt.Sprintf("%d added", r.Added)),
 		styleRed.Render(fmt.Sprintf("%d removed", r.Removed)),

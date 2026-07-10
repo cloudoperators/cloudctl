@@ -67,47 +67,36 @@ func (p *plainPrinter) Print(v any) error {
 		}
 
 	case SyncDryRunResult:
-		w("Dry-run: no changes will be written.\n\n")
 		total := t.Added + t.Removed + t.Modified
 		if total == 0 {
 			w("No changes detected.\n")
 			break
 		}
-		printDiffSection := func(title string, entries []DiffEntry) {
-			if len(entries) == 0 {
-				return
-			}
-			n := 0
-			for _, e := range entries {
-				if e.ChangeType != "" {
-					n++
-				}
-			}
-			w("%s (%d change(s))\n", title, n)
-			for _, e := range entries {
-				switch e.ChangeType {
-				case "added":
-					w("  + %s\n", e.Name)
-				case "removed":
-					w("  - %s\n", e.Name)
-				case "modified":
-					w("  ~ %s\n", e.Name)
-					for _, f := range e.Fields {
+		w("Dry-run: no changes will be written.\n\n")
+		w("CLUSTER ACCESSES (%d change(s))\n", total)
+		for _, a := range t.Accesses {
+			switch a.ChangeType {
+			case "added":
+				w("  + %-20s  %s\n", a.Name, a.Server)
+			case "removed":
+				w("  - %-20s  (removed)\n", a.Name)
+			case "modified":
+				w("  ~ %s\n", a.Name)
+				for _, f := range a.Fields {
+					if f.Field == "Credentials" {
+						w("      %-14s  changed\n", "Credentials:")
+					} else {
 						if f.Old != "" {
-							w("      %-12s  - %s\n", f.Field+":", f.Old)
+							w("      %-14s  - %s\n", f.Field+":", f.Old)
 						}
 						if f.New != "" {
-							w("      %-12s  + %s\n", f.Field+":", f.New)
+							w("      %-14s  + %s\n", f.Field+":", f.New)
 						}
 					}
 				}
 			}
-			w("\n")
 		}
-		printDiffSection("CLUSTERS", t.Clusters)
-		printDiffSection("CONTEXTS", t.Contexts)
-		printDiffSection("AUTH INFOS", t.AuthInfos)
-		w("Summary: %d added, %d removed, %d modified. No changes will be written.\n",
+		w("\nSummary: %d added, %d removed, %d modified. No changes will be written.\n",
 			t.Added, t.Removed, t.Modified)
 
 	case ClusterVersionResult:

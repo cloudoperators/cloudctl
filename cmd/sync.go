@@ -233,7 +233,7 @@ func runSync(cmd *cobra.Command, args []string) error {
 
 	if dryRun {
 		diff := diffKubeconfig(localConfigBefore, localConfig)
-		return printer.Print(buildDryRunResult(diff))
+		return printer.Print(buildDryRunResult(diff, localConfigBefore, localConfig))
 	}
 
 	if writeErr := writeConfig(localConfig, remoteClusterKubeconfig); writeErr != nil {

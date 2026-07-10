@@ -763,7 +763,8 @@ func TestDiffKubeconfig_AddedContext(t *testing.T) {
 
 	oldCfg := newCfg()
 	newCfg2 := newCfg()
-	newCfg2.Contexts["cloudctl:prod"] = &clientcmdapi.Context{Cluster: "cloudctl:prod", AuthInfo: "cloudctl:auth-abc"}
+	// Context name has no prefix; cluster reference is prefixed (managed)
+	newCfg2.Contexts["prod"] = &clientcmdapi.Context{Cluster: "cloudctl:prod", AuthInfo: "cloudctl:auth-abc"}
 
 	diff := diffKubeconfig(oldCfg, newCfg2)
 	g.Expect(diff.Contexts).To(HaveLen(1))
@@ -777,7 +778,8 @@ func TestDiffKubeconfig_RemovedContext(t *testing.T) {
 	t.Cleanup(func() { prefix = orig })
 
 	oldCfg := newCfg()
-	oldCfg.Contexts["cloudctl:staging"] = &clientcmdapi.Context{Cluster: "cloudctl:staging"}
+	// Context name has no prefix; cluster reference is prefixed (managed)
+	oldCfg.Contexts["staging"] = &clientcmdapi.Context{Cluster: "cloudctl:staging"}
 	newCfg2 := newCfg()
 
 	diff := diffKubeconfig(oldCfg, newCfg2)
@@ -856,25 +858,127 @@ func TestRunSync_DryRun_NoWrite(t *testing.T) {
 	// Build a "before" and "after" config to simulate what dry-run does
 	localConfigBefore := clientcmdapi.NewConfig()
 	localConfigBefore.Clusters["cloudctl:existing"] = &clientcmdapi.Cluster{Server: "https://existing.example.com"}
+	localConfigBefore.Contexts["existing"] = &clientcmdapi.Context{Cluster: "cloudctl:existing", AuthInfo: "cloudctl:auth-abc"}
 
 	// Simulate an incoming server config that adds a new cluster
 	serverConfig := clientcmdapi.NewConfig()
 	serverConfig.Clusters["existing"] = &clientcmdapi.Cluster{Server: "https://existing.example.com"}
 	serverConfig.Clusters["new-cluster"] = &clientcmdapi.Cluster{Server: "https://new.example.com"}
+	sharedAuth := &clientcmdapi.AuthInfo{
+		Exec: &clientcmdapi.ExecConfig{
+			APIVersion: "client.authentication.k8s.io/v1",
+			Command:    "kubelogin",
+			Args:       []string{"get-token", "--oidc-issuer-url=https://issuer.example.com"},
+		},
+	}
+	serverConfig.AuthInfos["shared-user"] = sharedAuth
+	serverConfig.Contexts["existing"] = &clientcmdapi.Context{Cluster: "existing", AuthInfo: "shared-user"}
+	serverConfig.Contexts["new-cluster"] = &clientcmdapi.Context{Cluster: "new-cluster", AuthInfo: "shared-user"}
 
 	localConfig := localConfigBefore.DeepCopy()
 	err := mergeKubeconfig(localConfig, serverConfig)
 	g.Expect(err).ToNot(HaveOccurred())
 
 	diff := diffKubeconfig(localConfigBefore, localConfig)
-	result := buildDryRunResult(diff)
+	result := buildDryRunResult(diff, localConfigBefore, localConfig)
 
-	// The new cluster should appear as added
+	// The new cluster access should appear as added
 	g.Expect(result.Added).To(BeNumerically(">=", 1))
-	g.Expect(result.Clusters).To(ContainElement(
+	g.Expect(result.Accesses).To(ContainElement(
 		HaveField("ChangeType", "added"),
 	))
 
 	// Original localConfigBefore must not have been modified
 	g.Expect(localConfigBefore.Clusters).ToNot(HaveKey("cloudctl:new-cluster"))
+}
+
+// ---------------------------------------------------------------------------
+// buildAccessDiffs tests
+// ---------------------------------------------------------------------------
+
+func TestBuildAccessDiffs_Added(t *testing.T) {
+	g := NewWithT(t)
+	orig := prefix
+	prefix = "cloudctl"
+	t.Cleanup(func() { prefix = orig })
+
+	oldCfg := newCfg()
+	newCfg2 := newCfg()
+	newCfg2.Clusters["cloudctl:prod-eu-1"] = &clientcmdapi.Cluster{Server: "https://prod-eu-1.example.com"}
+	newCfg2.Contexts["prod-eu-1"] = &clientcmdapi.Context{Cluster: "cloudctl:prod-eu-1", AuthInfo: "cloudctl:auth-abc"}
+
+	diff := diffKubeconfig(oldCfg, newCfg2)
+	accesses := buildAccessDiffs(diff, oldCfg, newCfg2)
+
+	g.Expect(accesses).To(HaveLen(1))
+	g.Expect(accesses[0].Name).To(Equal("prod-eu-1"))
+	g.Expect(accesses[0].ChangeType).To(Equal("added"))
+	g.Expect(accesses[0].Server).To(Equal("https://prod-eu-1.example.com"))
+}
+
+func TestBuildAccessDiffs_Removed(t *testing.T) {
+	g := NewWithT(t)
+	orig := prefix
+	prefix = "cloudctl"
+	t.Cleanup(func() { prefix = orig })
+
+	oldCfg := newCfg()
+	oldCfg.Clusters["cloudctl:staging"] = &clientcmdapi.Cluster{Server: "https://staging.example.com"}
+	oldCfg.Contexts["staging"] = &clientcmdapi.Context{Cluster: "cloudctl:staging", AuthInfo: "cloudctl:auth-abc"}
+	newCfg2 := newCfg()
+
+	diff := diffKubeconfig(oldCfg, newCfg2)
+	accesses := buildAccessDiffs(diff, oldCfg, newCfg2)
+
+	g.Expect(accesses).To(HaveLen(1))
+	g.Expect(accesses[0].Name).To(Equal("staging"))
+	g.Expect(accesses[0].ChangeType).To(Equal("removed"))
+	g.Expect(accesses[0].Server).To(Equal("https://staging.example.com"))
+}
+
+func TestBuildAccessDiffs_ModifiedServer(t *testing.T) {
+	g := NewWithT(t)
+	orig := prefix
+	prefix = "cloudctl"
+	t.Cleanup(func() { prefix = orig })
+
+	oldCfg := newCfg()
+	oldCfg.Clusters["cloudctl:prod-eu-2"] = &clientcmdapi.Cluster{Server: "https://old.example.com"}
+	oldCfg.Contexts["prod-eu-2"] = &clientcmdapi.Context{Cluster: "cloudctl:prod-eu-2", AuthInfo: "cloudctl:auth-abc"}
+	oldCfg.AuthInfos["cloudctl:auth-abc"] = &clientcmdapi.AuthInfo{
+		Exec: &clientcmdapi.ExecConfig{Command: "kubelogin", Args: []string{"get-token"}},
+	}
+
+	newCfg2 := newCfg()
+	newCfg2.Clusters["cloudctl:prod-eu-2"] = &clientcmdapi.Cluster{Server: "https://new.example.com"}
+	newCfg2.Contexts["prod-eu-2"] = &clientcmdapi.Context{Cluster: "cloudctl:prod-eu-2", AuthInfo: "cloudctl:auth-abc"}
+	newCfg2.AuthInfos["cloudctl:auth-abc"] = &clientcmdapi.AuthInfo{
+		Exec: &clientcmdapi.ExecConfig{Command: "kubelogin", Args: []string{"get-token"}},
+	}
+
+	diff := diffKubeconfig(oldCfg, newCfg2)
+	accesses := buildAccessDiffs(diff, oldCfg, newCfg2)
+
+	g.Expect(accesses).To(HaveLen(1))
+	g.Expect(accesses[0].Name).To(Equal("prod-eu-2"))
+	g.Expect(accesses[0].ChangeType).To(Equal("modified"))
+	g.Expect(accesses[0].Fields).To(ContainElement(
+		And(HaveField("Field", "Server"), HaveField("Old", "https://old.example.com"), HaveField("New", "https://new.example.com")),
+	))
+}
+
+func TestBuildAccessDiffs_NoChanges(t *testing.T) {
+	g := NewWithT(t)
+	orig := prefix
+	prefix = "cloudctl"
+	t.Cleanup(func() { prefix = orig })
+
+	cfg := newCfg()
+	cfg.Clusters["cloudctl:unchanged"] = &clientcmdapi.Cluster{Server: "https://same.example.com"}
+	cfg.Contexts["unchanged"] = &clientcmdapi.Context{Cluster: "cloudctl:unchanged", AuthInfo: "cloudctl:auth-abc"}
+
+	diff := diffKubeconfig(cfg, cfg)
+	accesses := buildAccessDiffs(diff, cfg, cfg)
+
+	g.Expect(accesses).To(BeEmpty())
 }
