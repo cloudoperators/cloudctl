@@ -13,6 +13,7 @@ import (
 	"maps"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -66,9 +67,9 @@ func init() {
 		}
 	}
 	if defaultTokenCacheDir != "" {
-		defaultTokenCacheDir += "/.kube/cache/oidc-login"
+		defaultTokenCacheDir = filepath.Join(defaultTokenCacheDir, ".kube", "cache", "oidc-login")
 	} else {
-		defaultTokenCacheDir = "~/.kube/cache/oidc-login"
+		defaultTokenCacheDir = filepath.Join("~", ".kube", "cache", "oidc-login")
 	}
 	syncCmd.Flags().StringVar(&kubeloginTokenCacheDir, "kubelogin-token-cache-dir", defaultTokenCacheDir, "Directory for OIDC token cache files")
 

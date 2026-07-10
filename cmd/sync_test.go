@@ -6,6 +6,7 @@ package cmd
 import (
 	"bytes"
 	"os"
+	"path/filepath"
 	"testing"
 
 	greenhousemetav1alpha1 "github.com/cloudoperators/greenhouse/api/meta/v1alpha1"
@@ -257,7 +258,7 @@ func TestSyncFlags_AuthTypeAndKubeloginDefaults(t *testing.T) {
 	g.Expect(fCache).ToNot(BeNil())
 	home, err := os.UserHomeDir()
 	g.Expect(err).ToNot(HaveOccurred())
-	g.Expect(fCache.DefValue).To(Equal(home + "/.kube/cache/oidc-login"))
+	g.Expect(fCache.DefValue).To(Equal(filepath.Join(home, ".kube", "cache", "oidc-login")))
 }
 
 func TestBuildKubeloginArgs_MappingAndExtras(t *testing.T) {
