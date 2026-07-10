@@ -246,7 +246,7 @@ func buildSyncResult(ready, notReady []v1alpha1.ClusterKubeconfig) output.SyncRe
 	for _, ckc := range ready {
 		ctxName := ""
 		if len(ckc.Spec.Kubeconfig.Contexts) > 0 {
-			ctxName = managedNameFunc(ckc.Spec.Kubeconfig.Contexts[0].Name)
+			ctxName = ckc.Spec.Kubeconfig.Contexts[0].Name
 		}
 		result.Clusters = append(result.Clusters, output.ClusterSyncResult{
 			Name:    ckc.Name,
@@ -258,7 +258,7 @@ func buildSyncResult(ready, notReady []v1alpha1.ClusterKubeconfig) output.SyncRe
 	for _, ckc := range notReady {
 		ctxName := ""
 		if len(ckc.Spec.Kubeconfig.Contexts) > 0 {
-			ctxName = managedNameFunc(ckc.Spec.Kubeconfig.Contexts[0].Name)
+			ctxName = ckc.Spec.Kubeconfig.Contexts[0].Name
 		}
 		result.Clusters = append(result.Clusters, output.ClusterSyncResult{
 			Name:    ckc.Name,
@@ -275,27 +275,27 @@ func buildSyncResult(ready, notReady []v1alpha1.ClusterKubeconfig) output.SyncRe
 }
 
 // buildFailedSyncResult is like buildSyncResult but marks all ready clusters as failed
-// with the given error as the reason, used when the merge step itself fails.
-func buildFailedSyncResult(ready, notReady []v1alpha1.ClusterKubeconfig, mergeErr error) output.SyncResult {
+// with the given error as the reason. Used when either the merge or the kubeconfig write step fails.
+func buildFailedSyncResult(ready, notReady []v1alpha1.ClusterKubeconfig, reason error) output.SyncResult {
 	result := output.SyncResult{}
-	reason := mergeErr.Error()
+	msg := reason.Error()
 	for _, ckc := range ready {
 		ctxName := ""
 		if len(ckc.Spec.Kubeconfig.Contexts) > 0 {
-			ctxName = managedNameFunc(ckc.Spec.Kubeconfig.Contexts[0].Name)
+			ctxName = ckc.Spec.Kubeconfig.Contexts[0].Name
 		}
 		result.Clusters = append(result.Clusters, output.ClusterSyncResult{
 			Name:    ckc.Name,
 			Context: ctxName,
 			Status:  output.ClusterSyncStatusFailed,
-			Reason:  reason,
+			Reason:  msg,
 		})
 		result.Failed++
 	}
 	for _, ckc := range notReady {
 		ctxName := ""
 		if len(ckc.Spec.Kubeconfig.Contexts) > 0 {
-			ctxName = managedNameFunc(ckc.Spec.Kubeconfig.Contexts[0].Name)
+			ctxName = ckc.Spec.Kubeconfig.Contexts[0].Name
 		}
 		result.Clusters = append(result.Clusters, output.ClusterSyncResult{
 			Name:    ckc.Name,
