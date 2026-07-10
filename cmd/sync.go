@@ -59,9 +59,16 @@ func init() {
 	syncCmd.Flags().StringVar(&authType, "auth-type", "exec-plugin", "Auth credential style: exec-plugin (kubelogin) or auth-provider (legacy)")
 	syncCmd.Flags().StringVar(&kubeloginPath, "kubelogin-path", "kubelogin", "Path to the kubelogin binary (used with --auth-type=exec-plugin)")
 	syncCmd.Flags().StringSliceVar(&kubeloginExtraArgs, "kubelogin-extra-args", nil, "Additional arguments passed to the kubelogin exec plugin")
-	defaultTokenCacheDir := "$(HOME)/.kube/cache/oidc-login"
-	if home, err := os.UserHomeDir(); err == nil {
-		defaultTokenCacheDir = home + "/.kube/cache/oidc-login"
+	defaultTokenCacheDir := os.Getenv("HOME")
+	if defaultTokenCacheDir == "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			defaultTokenCacheDir = home
+		}
+	}
+	if defaultTokenCacheDir != "" {
+		defaultTokenCacheDir += "/.kube/cache/oidc-login"
+	} else {
+		defaultTokenCacheDir = "~/.kube/cache/oidc-login"
 	}
 	syncCmd.Flags().StringVar(&kubeloginTokenCacheDir, "kubelogin-token-cache-dir", defaultTokenCacheDir, "Directory for OIDC token cache files")
 

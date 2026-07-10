@@ -31,7 +31,7 @@ func main() {
 		p := output.NewForError(format, os.Stderr)
 
 		if errors.Is(err, context.DeadlineExceeded) {
-			p.PrintError(errors.New("timed out waiting for the API server to respond — the endpoint may be unreachable; use --timeout to adjust the deadline"))
+			p.PrintError(errors.New("timed out waiting for the API server to respond — the endpoint may be unreachable"))
 		} else if errors.Is(err, context.Canceled) {
 			p.PrintError(errors.New("operation cancelled"))
 		} else {
