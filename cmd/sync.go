@@ -76,7 +76,7 @@ func init() {
 	// BindPFlags can theroretically return an error if called with `nil` as an argument
 	// which should never happened after at least one flag was defined. That's why the output
 	// there is ignored.
-	viper.BindPFlags(syncCmd.Flags())
+	_ = viper.BindPFlags(syncCmd.Flags())
 }
 
 var syncCmd = &cobra.Command{

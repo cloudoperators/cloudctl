@@ -80,7 +80,7 @@ func init() {
 	// BindPFlags can theroretically return an error if called with `nil` as an argument
 	// which should never happened after at least one flag was defined. That's why the output
 	// there is ignored.
-	viper.BindPFlags(rootCmd.PersistentFlags())
+	_ = viper.BindPFlags(rootCmd.PersistentFlags())
 
 	// Add subcommands here
 	rootCmd.AddCommand(syncCmd)

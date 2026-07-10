@@ -175,8 +175,8 @@ func getUnauthenticatedVersion(ctx context.Context, cfg *rest.Config) (*version.
 	if cfg.Insecure {
 		tlsCfg.InsecureSkipVerify = true // #nosec G402 — user explicitly opted in
 	}
-	if cfg.TLSClientConfig.ServerName != "" {
-		tlsCfg.ServerName = cfg.TLSClientConfig.ServerName
+	if cfg.ServerName != "" {
+		tlsCfg.ServerName = cfg.ServerName
 	}
 
 	if len(cfg.CAData) > 0 {
@@ -232,5 +232,5 @@ func init() {
 	// BindPFlags can theoretically return an error if called with `nil` as an argument
 	// which should never happen after at least one flag was defined. That's why the output
 	// there is ignored.
-	viper.BindPFlags(clusterVersionCmd.Flags())
+	_ = viper.BindPFlags(clusterVersionCmd.Flags())
 }

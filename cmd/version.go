@@ -45,8 +45,8 @@ Use --short to print only the version number (useful in shell scripts):
 		}
 
 		if viper.GetBool("short") {
-			fmt.Fprintln(cmd.OutOrStdout(), info.Version)
-			return nil
+			_, err := fmt.Fprintln(cmd.OutOrStdout(), info.Version)
+			return err
 		}
 
 		format, err := output.ParseFormat(viper.GetString("output"))
@@ -65,5 +65,5 @@ func init() {
 	// BindPFlags can theroretically return an error if called with `nil` as an argument
 	// which should never happened after at least one flag was defined. That's why the output
 	// there is ignored.
-	viper.BindPFlags(versionCmd.Flags())
+	_ = viper.BindPFlags(versionCmd.Flags())
 }

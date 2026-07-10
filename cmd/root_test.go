@@ -36,7 +36,7 @@ func TestConfigurationLoad(t *testing.T) {
 
 	f, err := os.CreateTemp("", "test_cloudctl_config")
 	g.Expect(err).To(BeNil())
-	t.Cleanup(func() { os.Remove(f.Name()) })
+	t.Cleanup(func() { _ = os.Remove(f.Name()) })
 
 	_, err = f.Write(ConfigA)
 	g.Expect(err).To(BeNil())
@@ -44,13 +44,8 @@ func TestConfigurationLoad(t *testing.T) {
 	g.Expect(err).To(BeNil())
 
 	// Set config file location env variable
-	orig := os.Getenv("CLOUDCTL_CONFIG")
-	os.Setenv("CLOUDCTL_CONFIG", f.Name())
-
-	t.Cleanup(func() {
-		viper.Reset()
-		os.Setenv("CLOUDCTL_CONFIG", orig)
-	})
+	t.Setenv("CLOUDCTL_CONFIG", f.Name())
+	t.Cleanup(func() { viper.Reset() })
 
 	// Do the setup
 	g.Expect(setupConfig()).To(BeNil())
@@ -86,13 +81,8 @@ func TestMissingConfigurationFile(t *testing.T) {
 	g := NewWithT(t)
 
 	// Set config file location env variable
-	orig := os.Getenv("CLOUDCTL_CONFIG")
-	os.Setenv("CLOUDCTL_CONFIG", "A")
-
-	t.Cleanup(func() {
-		viper.Reset()
-		os.Setenv("CLOUDCTL_CONFIG", orig)
-	})
+	t.Setenv("CLOUDCTL_CONFIG", "A")
+	t.Cleanup(func() { viper.Reset() })
 
 	// Do the setup
 	err := setupConfig()

@@ -25,7 +25,7 @@ func (p *yamlPrinter) Print(v any) error {
 
 func (p *yamlPrinter) PrintError(err error) {
 	b, _ := yaml.Marshal(ErrorResult{Error: err.Error()})
-	fmt.Fprint(p.w, string(b))
+	_, _ = fmt.Fprint(p.w, string(b))
 }
 
 func (p *yamlPrinter) StartSpinner(_ string) func() {

@@ -108,7 +108,7 @@ func (p *interactivePrinter) Print(v any) error {
 }
 
 func (p *interactivePrinter) PrintError(err error) {
-	fmt.Fprintf(p.w, "%s %s\n", styleRed.Render("Error:"), err.Error())
+	_, _ = fmt.Fprintf(p.w, "%s %s\n", styleRed.Render("Error:"), err.Error())
 }
 
 func (p *interactivePrinter) printSyncResult(r SyncResult) error {

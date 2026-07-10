@@ -25,7 +25,7 @@ func (p *jsonPrinter) Print(v any) error {
 func (p *jsonPrinter) PrintError(err error) {
 	// Ignore marshal failure — if we can't encode the error we have nothing useful to emit.
 	b, _ := json.MarshalIndent(ErrorResult{Error: err.Error()}, "", "  ")
-	fmt.Fprintln(p.w, string(b))
+	_, _ = fmt.Fprintln(p.w, string(b))
 }
 
 func (p *jsonPrinter) StartSpinner(_ string) func() {
