@@ -386,6 +386,12 @@ func buildAccessDiffs(diff KubeconfigDiff, oldCfg, newCfg *clientcmdapi.Config) 
 				}
 			}
 		}
+		// Skip modified entries that have no user-visible field changes —
+		// these arise from internal authinfo hash reassignment during
+		// deduplication where the effective credentials are unchanged.
+		if ctxDiff.ChangeType == DiffChangeModified && len(entry.access.Fields) == 0 {
+			continue
+		}
 		byName[name] = entry
 	}
 
