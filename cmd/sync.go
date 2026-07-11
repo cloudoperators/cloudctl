@@ -494,8 +494,11 @@ func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdap
 		}
 	}
 
-	// Prepare a map to track unique AuthInfos if merging is enabled
-	var authInfoMap map[string]string // key: unique identifier, value: authinfo name to use (may be unmanaged local or managed hash-based)
+	// Prepare a map to track unique AuthInfos if merging is enabled.
+	// Keyed by server-side authinfo name so that two server AuthInfos that share
+	// the same generateAuthInfoKey (e.g. same OIDC flags but different non-OIDC
+	// exec args) each get their own managed-name entry and are never conflated.
+	var authInfoMap map[string]string // key: server authinfo name, value: authinfo name to use (may be unmanaged local or managed hash-based)
 	if mergeIdenticalUsers {
 		authInfoMap = make(map[string]string)
 
@@ -541,7 +544,7 @@ func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdap
 					// Credentials are identical — leave the unmanaged local entry untouched
 					// to preserve any local-only fields (Token, TokenFile, Impersonate, etc.)
 					// that are outside authInfoEqual's comparison scope.
-					authInfoMap[uniqueKey] = localName
+					authInfoMap[serverName] = localName
 					goto nextServerAuth
 				}
 			}
@@ -561,7 +564,7 @@ func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdap
 					localConfig.AuthInfos[managedAuthName] = serverAuth
 				}
 
-				authInfoMap[uniqueKey] = managedAuthName
+				authInfoMap[serverName] = managedAuthName
 			}
 		nextServerAuth:
 		}
@@ -594,22 +597,23 @@ func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdap
 
 		var managedAuthInfoName string
 		if mergeIdenticalUsers {
-			// Generate the unique key for the AuthInfo referenced by this context
+			// Look up by server authinfo name — authInfoMap is keyed by server name,
+			// so each distinct server AuthInfo resolves to its own managed entry.
 			serverAuthName := serverCtx.AuthInfo
-			serverAuth, exists := serverConfig.AuthInfos[serverAuthName]
-			if !exists {
-				return fmt.Errorf("AuthInfo %s referenced in context %s does not exist", serverAuthName, serverName)
-			}
-			uniqueKey := generateAuthInfoKey(serverAuth)
 			var existsInMap bool
-			managedAuthInfoName, existsInMap = authInfoMap[uniqueKey]
+			managedAuthInfoName, existsInMap = authInfoMap[serverAuthName]
 			if !existsInMap {
 				// This should not happen as all AuthInfos should have been processed.
-				// However, to be safe, generate a new managedAuthName
+				// However, to be safe, generate a new managedAuthName.
+				serverAuth, exists := serverConfig.AuthInfos[serverAuthName]
+				if !exists {
+					return fmt.Errorf("AuthInfo %s referenced in context %s does not exist", serverAuthName, serverName)
+				}
+				uniqueKey := generateAuthInfoKey(serverAuth)
 				hash := sha256.Sum256([]byte(uniqueKey))
 				hashString := hex.EncodeToString(hash[:])[:16]
 				managedAuthInfoName = fmt.Sprintf("%s:auth-%s", prefix, hashString)
-				authInfoMap[uniqueKey] = managedAuthInfoName
+				authInfoMap[serverAuthName] = managedAuthInfoName
 				localConfig.AuthInfos[managedAuthInfoName] = serverAuth
 			}
 		} else {
@@ -693,14 +697,7 @@ func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdap
 				var expectedAuthInfo string
 				if mergeIdenticalUsers {
 					serverAuthName := serverCtx.AuthInfo
-					serverAuth, exists := serverConfig.AuthInfos[serverAuthName]
-					if !exists {
-						slog.Debug("removing stale context (missing authinfo)", "name", localName)
-						delete(localConfig.Contexts, localName)
-						continue
-					}
-					uniqueKey := generateAuthInfoKey(serverAuth)
-					mappedName, exists := authInfoMap[uniqueKey]
+					mappedName, exists := authInfoMap[serverAuthName]
 					if !exists {
 						slog.Debug("removing stale context (unmapped authinfo)", "name", localName)
 						delete(localConfig.Contexts, localName)
