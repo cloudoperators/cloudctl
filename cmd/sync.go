@@ -75,8 +75,8 @@ func init() {
 
 	syncCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview changes without writing to the kubeconfig file")
 
-	// BindPFlags can theroretically return an error if called with `nil` as an argument
-	// which should never happened after at least one flag was defined. That's why the output
+	// BindPFlags can theoretically return an error if called with `nil` as an argument
+	// which should never happen after at least one flag was defined. That's why the output
 	// there is ignored.
 	viper.BindPFlags(syncCmd.Flags())
 }
