@@ -554,6 +554,14 @@ func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdap
 				hashString := hex.EncodeToString(hash[:])[:16] // Using the first 16 chars for brevity
 				managedAuthName := fmt.Sprintf("%s:auth-%s", prefix, hashString)
 
+				// If the hash-derived name is already taken by a non-equal authinfo
+				// (two server authinfos share the same OIDC key but differ in non-OIDC
+				// exec args), fall back to a per-server managed name to avoid conflation.
+				if existingAuth, exists := localConfig.AuthInfos[managedAuthName]; exists && !authInfoEqual(existingAuth, serverAuth) {
+					slog.Debug("hash collision with non-equal authinfo, using per-server name", "name", managedAuthName, "server", serverName)
+					managedAuthName = managedNameFunc(serverName)
+				}
+
 				// Merge AuthInfo to preserve id-token and refresh-token
 				if existingAuth, exists := localConfig.AuthInfos[managedAuthName]; exists {
 					slog.Debug("merging authinfo tokens", "name", managedAuthName, "server", serverName)
@@ -606,8 +614,8 @@ func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdap
 				// This should not happen as all AuthInfos should have been processed.
 				// However, to be safe, generate a new managedAuthName.
 				serverAuth, exists := serverConfig.AuthInfos[serverAuthName]
-				if !exists {
-					return fmt.Errorf("AuthInfo %s referenced in context %s does not exist", serverAuthName, serverName)
+				if !exists || serverAuth == nil {
+					return fmt.Errorf("AuthInfo %s referenced in context %s does not exist or is nil", serverAuthName, serverName)
 				}
 				uniqueKey := generateAuthInfoKey(serverAuth)
 				hash := sha256.Sum256([]byte(uniqueKey))
