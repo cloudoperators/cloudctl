@@ -268,11 +268,15 @@ func diffAuthInfos(oldCfg, newCfg *clientcmdapi.Config) []EntryDiff {
 		}
 	}
 
-	for name := range oldCfg.AuthInfos {
+	for name, oldAuth := range oldCfg.AuthInfos {
 		if !isManaged(name) {
 			continue
 		}
-		if _, exists := newCfg.AuthInfos[name]; !exists {
+		if oldAuth == nil {
+			continue
+		}
+		newAuth, exists := newCfg.AuthInfos[name]
+		if !exists || newAuth == nil {
 			diffs = append(diffs, EntryDiff{Name: name, ChangeType: DiffChangeRemoved})
 		}
 	}
