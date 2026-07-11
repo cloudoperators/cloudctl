@@ -56,7 +56,7 @@ type AccessDiff struct {
 	Name       string        `json:"name"             yaml:"name"`
 	ChangeType string        `json:"changeType"       yaml:"changeType"`
 	Server     string        `json:"server,omitempty" yaml:"server,omitempty"`
-	Fields     []FieldChange `json:"fields,omitempty" yaml:"fields,omitempty"`
+	Fields     []FieldChange `json:"fields,omitzero" yaml:"fields,omitempty"`
 }
 
 // SyncDryRunResult is the output of `sync --dry-run`.
@@ -74,7 +74,7 @@ type SyncDryRunResult struct {
 type DiffEntry struct {
 	Name       string        `json:"name"             yaml:"name"`
 	ChangeType string        `json:"changeType"       yaml:"changeType"`
-	Fields     []FieldChange `json:"fields,omitempty" yaml:"fields,omitempty"`
+	Fields     []FieldChange `json:"fields,omitzero" yaml:"fields,omitempty"`
 }
 
 // FieldChange describes a field-level change within a modified entry.
