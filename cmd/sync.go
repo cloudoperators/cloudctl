@@ -521,6 +521,10 @@ func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdap
 
 		// Merge AuthInfos
 		for serverName, serverAuth := range serverConfig.AuthInfos {
+			if serverAuth == nil {
+				slog.Debug("skipping nil server authinfo", "name", serverName)
+				continue
+			}
 			uniqueKey := generateAuthInfoKey(serverAuth)
 
 			// If an unmanaged local entry has the same credentials, reuse its name.
@@ -564,6 +568,10 @@ func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdap
 	} else {
 		// Without merging, manage AuthInfos normally
 		for serverName, serverAuth := range serverConfig.AuthInfos {
+			if serverAuth == nil {
+				slog.Debug("skipping nil server authinfo", "name", serverName)
+				continue
+			}
 			managedAuthName := managedNameFunc(serverName)
 			localAuth, exists := localConfig.AuthInfos[managedAuthName]
 			if !exists {
