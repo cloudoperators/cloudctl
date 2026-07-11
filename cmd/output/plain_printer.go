@@ -126,16 +126,26 @@ func (p *plainPrinter) printDryRunDiff(w func(string, ...any), t SyncDryRunResul
 					w("  ~ %-12s  changed\n", strings.ToLower(f.Field)+":")
 				} else {
 					label := strings.ToLower(f.Field) + ":"
-					oldVal := f.Old
-					if oldVal == "" {
-						oldVal = "<empty>"
+					// For per-argument Exec Args diffs, Old=="" means the arg was added
+					// and New=="" means it was removed — print only the present side.
+					if f.Field == "Exec Args" {
+						if f.Old != "" {
+							w("  - %-12s  %s\n", label, f.Old)
+						} else {
+							w("  + %-12s  %s\n", label, f.New)
+						}
+					} else {
+						oldVal := f.Old
+						if oldVal == "" {
+							oldVal = "<empty>"
+						}
+						newVal := f.New
+						if newVal == "" {
+							newVal = "<empty>"
+						}
+						w("  - %-12s  %s\n", label, oldVal)
+						w("  + %-12s  %s\n", label, newVal)
 					}
-					newVal := f.New
-					if newVal == "" {
-						newVal = "<empty>"
-					}
-					w("  - %-12s  %s\n", label, oldVal)
-					w("  + %-12s  %s\n", label, newVal)
 				}
 			}
 		}

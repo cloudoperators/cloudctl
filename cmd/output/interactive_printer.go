@@ -248,16 +248,26 @@ func (p *interactivePrinter) printDryRunDiff(w func(string, ...any), r SyncDryRu
 					w("  %s %-12s  %s\n", styleYellow.Render("~"), strings.ToLower(f.Field)+":", styleYellow.Render("changed"))
 				} else {
 					label := strings.ToLower(f.Field) + ":"
-					oldVal := f.Old
-					if oldVal == "" {
-						oldVal = "<empty>"
+					// For per-argument Exec Args diffs, Old=="" means the arg was added
+					// and New=="" means it was removed — print only the present side.
+					if f.Field == "Exec Args" {
+						if f.Old != "" {
+							w("  %s %-12s  %s\n", styleRed.Render("-"), label, styleRed.Render(f.Old))
+						} else {
+							w("  %s %-12s  %s\n", styleGreen.Render("+"), label, styleGreen.Render(f.New))
+						}
+					} else {
+						oldVal := f.Old
+						if oldVal == "" {
+							oldVal = "<empty>"
+						}
+						newVal := f.New
+						if newVal == "" {
+							newVal = "<empty>"
+						}
+						w("  %s %-12s  %s\n", styleRed.Render("-"), label, styleRed.Render(oldVal))
+						w("  %s %-12s  %s\n", styleGreen.Render("+"), label, styleGreen.Render(newVal))
 					}
-					newVal := f.New
-					if newVal == "" {
-						newVal = "<empty>"
-					}
-					w("  %s %-12s  %s\n", styleRed.Render("-"), label, styleRed.Render(oldVal))
-					w("  %s %-12s  %s\n", styleGreen.Render("+"), label, styleGreen.Render(newVal))
 				}
 			}
 		}
