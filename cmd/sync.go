@@ -690,36 +690,39 @@ func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdap
 		}
 	}
 
-	// Delete managed Contexts not present in serverConfig
+	// Delete managed Contexts not present in serverConfig.
+	// A context is considered managed when its cluster reference is managed
+	// (context names are not prefixed — only the referenced cluster is).
 	for localName, localCtx := range localConfig.Contexts {
-		if isManaged(localName) {
-			// Derive the server-side name by stripping the prefix
-			serverName := unmanagedNameFunc(localName)
-			if _, exists := serverConfig.Contexts[serverName]; !exists {
-				slog.Debug("removing stale context", "name", localName)
-				delete(localConfig.Contexts, localName)
-			} else {
-				// Additionally, verify that the context's Cluster and AuthInfo are still managed
-				serverCtx := serverConfig.Contexts[serverName]
-				expectedCluster := managedNameFunc(serverCtx.Cluster)
-				var expectedAuthInfo string
-				if mergeIdenticalUsers {
-					serverAuthName := serverCtx.AuthInfo
-					mappedName, exists := authInfoMap[serverAuthName]
-					if !exists {
-						slog.Debug("removing stale context (unmapped authinfo)", "name", localName)
-						delete(localConfig.Contexts, localName)
-						continue
-					}
-					expectedAuthInfo = mappedName
-				} else {
-					expectedAuthInfo = managedNameFunc(serverCtx.AuthInfo)
-				}
-
-				if localCtx.Cluster != expectedCluster || localCtx.AuthInfo != expectedAuthInfo {
-					slog.Debug("removing stale context (mismatched refs)", "name", localName)
+		if localCtx == nil || !isManaged(localCtx.Cluster) {
+			continue
+		}
+		// Context name equals the server-side name (no prefix applied).
+		serverName := localName
+		if _, exists := serverConfig.Contexts[serverName]; !exists {
+			slog.Debug("removing stale context", "name", localName)
+			delete(localConfig.Contexts, localName)
+		} else {
+			// Additionally, verify that the context's Cluster and AuthInfo are still managed
+			serverCtx := serverConfig.Contexts[serverName]
+			expectedCluster := managedNameFunc(serverCtx.Cluster)
+			var expectedAuthInfo string
+			if mergeIdenticalUsers {
+				serverAuthName := serverCtx.AuthInfo
+				mappedName, exists := authInfoMap[serverAuthName]
+				if !exists {
+					slog.Debug("removing stale context (unmapped authinfo)", "name", localName)
 					delete(localConfig.Contexts, localName)
+					continue
 				}
+				expectedAuthInfo = mappedName
+			} else {
+				expectedAuthInfo = managedNameFunc(serverCtx.AuthInfo)
+			}
+
+			if localCtx.Cluster != expectedCluster || localCtx.AuthInfo != expectedAuthInfo {
+				slog.Debug("removing stale context (mismatched refs)", "name", localName)
+				delete(localConfig.Contexts, localName)
 			}
 		}
 	}
