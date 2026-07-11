@@ -257,6 +257,51 @@ func TestDownloadAndExtract_BinaryNotFound(t *testing.T) {
 	g.Expect(err.Error()).To(ContainSubstring("cloudctl"))
 }
 
+func TestDownloadAndExtract_NonRegularEntry(t *testing.T) {
+	g := NewWithT(t)
+
+	// Build an archive with a symlink entry named "cloudctl".
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	hdr := &tar.Header{
+		Name:     "cloudctl",
+		Typeflag: tar.TypeSymlink,
+		Linkname: "/usr/bin/evil",
+	}
+	_ = tw.WriteHeader(hdr)
+	_ = tw.Close()
+	_ = gz.Close()
+	archiveBytes := buf.Bytes()
+	digest := sha256.Sum256(archiveBytes)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(archiveBytes)
+	}))
+	defer srv.Close()
+
+	_, err := downloadAndExtractFrom(t.Context(), srv.Client(), srv.URL, digest[:])
+	g.Expect(err).To(HaveOccurred())
+	g.Expect(err.Error()).To(ContainSubstring("not a regular file"))
+}
+
+func TestDownloadChecksum_InvalidLength(t *testing.T) {
+	g := NewWithT(t)
+
+	// Only 16 bytes — too short for SHA-256.
+	shortDigest := make([]byte, 16)
+	hexStr := hex.EncodeToString(shortDigest)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(hexStr + "\n"))
+	}))
+	defer srv.Close()
+
+	_, err := downloadChecksumFrom(t.Context(), srv.Client(), srv.URL)
+	g.Expect(err).To(HaveOccurred())
+	g.Expect(err.Error()).To(ContainSubstring("invalid checksum length"))
+}
+
 // --- printer output tests ---
 
 func TestUpdateResult_PlainPrinter_UpToDate(t *testing.T) {

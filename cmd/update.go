@@ -28,13 +28,14 @@ import (
 const githubReleasesLatestURL = "https://api.github.com/repos/cloudoperators/cloudctl/releases/latest"
 
 // updateHTTPClient is used for all update-related network calls.
-// ResponseHeaderTimeout prevents hangs on slow/stalled connections while
-// still allowing large archive downloads to stream to completion.
-var updateHTTPClient = &http.Client{
-	Transport: &http.Transport{
-		ResponseHeaderTimeout: 30 * time.Second,
-	},
-}
+// It clones http.DefaultTransport so proxy settings, TLS config, and HTTP/2
+// support are preserved, then sets ResponseHeaderTimeout to prevent hangs on
+// stalled connections while still allowing large archive downloads to complete.
+var updateHTTPClient = func() *http.Client {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.ResponseHeaderTimeout = 30 * time.Second
+	return &http.Client{Transport: t}
+}()
 
 type ghRelease struct {
 	TagName string    `json:"tag_name"`
@@ -229,6 +230,9 @@ func downloadChecksumFrom(ctx context.Context, client *http.Client, url string) 
 	if err != nil {
 		return nil, fmt.Errorf("parsing checksum hex %q: %w", hexStr, err)
 	}
+	if len(digest) != sha256.Size {
+		return nil, fmt.Errorf("invalid checksum length: got %d bytes, want %d", len(digest), sha256.Size)
+	}
 	return digest, nil
 }
 
@@ -254,9 +258,13 @@ func downloadAndExtractFrom(ctx context.Context, client *http.Client, url string
 		return nil, fmt.Errorf("downloading archive: HTTP %d", resp.StatusCode)
 	}
 
-	archiveBytes, err := io.ReadAll(resp.Body)
+	const maxArchiveSize = 256 << 20 // 256 MiB
+	archiveBytes, err := io.ReadAll(io.LimitReader(resp.Body, maxArchiveSize+1))
 	if err != nil {
 		return nil, fmt.Errorf("reading archive: %w", err)
+	}
+	if int64(len(archiveBytes)) > maxArchiveSize {
+		return nil, fmt.Errorf("archive exceeds maximum allowed size of 256 MiB")
 	}
 
 	// Verify SHA256 of the raw archive bytes.
@@ -282,6 +290,9 @@ func downloadAndExtractFrom(ctx context.Context, client *http.Client, url string
 			return nil, fmt.Errorf("reading archive: %w", err)
 		}
 		if hdr.Name == "cloudctl" || strings.HasSuffix(hdr.Name, "/cloudctl") {
+			if hdr.Typeflag != tar.TypeReg {
+				return nil, fmt.Errorf("archive entry %q is not a regular file (type %d)", hdr.Name, hdr.Typeflag)
+			}
 			binaryBytes, err := io.ReadAll(tr)
 			if err != nil {
 				return nil, fmt.Errorf("reading binary from archive: %w", err)
