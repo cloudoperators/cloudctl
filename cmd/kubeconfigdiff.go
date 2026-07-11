@@ -199,6 +199,9 @@ func diffAuthInfos(oldCfg, newCfg *clientcmdapi.Config) []EntryDiff {
 			if oldAuth.Exec.InteractiveMode != newAuth.Exec.InteractiveMode {
 				fields = append(fields, FieldDiff{Field: "Exec interactive mode", Old: string(oldAuth.Exec.InteractiveMode), New: string(newAuth.Exec.InteractiveMode)})
 			}
+			if !equalExecEnv(oldAuth.Exec.Env, newAuth.Exec.Env) {
+				fields = append(fields, FieldDiff{Field: "Exec Env", Old: fmt.Sprintf("%d var(s)", len(oldAuth.Exec.Env)), New: fmt.Sprintf("%d var(s)", len(newAuth.Exec.Env))})
+			}
 			fields = append(fields, argsDiff(oldAuth.Exec.Args, newAuth.Exec.Args)...)
 		} else if newAuth.Exec != nil && oldAuth.Exec == nil {
 			fields = append(fields, FieldDiff{Field: "Auth type", Old: "auth-provider", New: "exec-plugin"})
@@ -469,6 +472,18 @@ func buildAccessDiffs(diff KubeconfigDiff, oldCfg, newCfg *clientcmdapi.Config) 
 				var authFields []output.FieldChange
 				if oldAuth != nil && newAuth != nil {
 					if newAuth.Exec != nil && oldAuth.Exec != nil {
+						if oldAuth.Exec.Command != newAuth.Exec.Command {
+							authFields = append(authFields, output.FieldChange{Field: "Exec Command", Old: oldAuth.Exec.Command, New: newAuth.Exec.Command})
+						}
+						if oldAuth.Exec.APIVersion != newAuth.Exec.APIVersion {
+							authFields = append(authFields, output.FieldChange{Field: "Exec API version", Old: oldAuth.Exec.APIVersion, New: newAuth.Exec.APIVersion})
+						}
+						if oldAuth.Exec.InteractiveMode != newAuth.Exec.InteractiveMode {
+							authFields = append(authFields, output.FieldChange{Field: "Exec interactive mode", Old: string(oldAuth.Exec.InteractiveMode), New: string(newAuth.Exec.InteractiveMode)})
+						}
+						if !equalExecEnv(oldAuth.Exec.Env, newAuth.Exec.Env) {
+							authFields = append(authFields, output.FieldChange{Field: "Exec Env", Old: fmt.Sprintf("%d var(s)", len(oldAuth.Exec.Env)), New: fmt.Sprintf("%d var(s)", len(newAuth.Exec.Env))})
+						}
 						for _, fd := range argsDiff(oldAuth.Exec.Args, newAuth.Exec.Args) {
 							authFields = append(authFields, output.FieldChange{
 								Field: fd.Field,
