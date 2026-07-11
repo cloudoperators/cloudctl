@@ -548,7 +548,7 @@ func buildAccessDiffs(diff KubeconfigDiff, oldCfg, newCfg *clientcmdapi.Config) 
 					entry.access.Fields = append(entry.access.Fields, output.FieldChange{
 						Field: "Credentials",
 						Old:   "changed",
-						New:   "",
+						New:   "changed",
 					})
 				}
 			}
@@ -637,7 +637,7 @@ func buildAccessDiffs(diff KubeconfigDiff, oldCfg, newCfg *clientcmdapi.Config) 
 			}
 			if len(fields) == 0 {
 				// authInfoEqual returned false but no specific fields were identified.
-				fields = []output.FieldChange{{Field: "Credentials", Old: "changed", New: ""}}
+				fields = []output.FieldChange{{Field: "Credentials", Old: "changed", New: "changed"}}
 			}
 			if existing, ok := byName[ctxName]; ok {
 				// Merge credential fields into the existing entry.
