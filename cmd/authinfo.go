@@ -18,6 +18,12 @@ import (
 
 // authInfoEqual compares two AuthInfo objects, excluding "id-token" and "refresh-token".
 func authInfoEqual(a, b *clientcmdapi.AuthInfo) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
 	// Compare ClientCertificateData
 	if !bytes.Equal(a.ClientCertificateData, b.ClientCertificateData) {
 		return false

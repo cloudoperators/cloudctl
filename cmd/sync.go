@@ -507,6 +507,9 @@ func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdap
 		keyToNames := make(map[string][]string)
 		for localName, localAuth := range localConfig.AuthInfos {
 			if !isManaged(localName) {
+				if localAuth == nil {
+					continue
+				}
 				key := generateAuthInfoKey(localAuth)
 				keyToNames[key] = append(keyToNames[key], localName)
 			}
