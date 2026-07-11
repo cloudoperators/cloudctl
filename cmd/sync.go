@@ -495,7 +495,7 @@ func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdap
 	}
 
 	// Prepare a map to track unique AuthInfos if merging is enabled
-	var authInfoMap map[string]string // key: unique identifier, value: managed AuthInfo name
+	var authInfoMap map[string]string // key: unique identifier, value: authinfo name to use (may be unmanaged local or managed hash-based)
 	if mergeIdenticalUsers {
 		authInfoMap = make(map[string]string)
 

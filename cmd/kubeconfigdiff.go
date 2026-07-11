@@ -231,6 +231,9 @@ func diffAuthInfos(oldCfg, newCfg *clientcmdapi.Config) []EntryDiff {
 		}
 		// AuthProvider diff
 		if newAuth.AuthProvider != nil && oldAuth.AuthProvider != nil {
+			if oldAuth.AuthProvider.Name != newAuth.AuthProvider.Name {
+				fields = append(fields, FieldDiff{Field: "Auth provider", Old: oldAuth.AuthProvider.Name, New: newAuth.AuthProvider.Name})
+			}
 			oldFiltered := filterAuthProviderConfig(oldAuth.AuthProvider.Config)
 			newFiltered := filterAuthProviderConfig(newAuth.AuthProvider.Config)
 			allKeys := make(map[string]struct{})
@@ -518,6 +521,9 @@ func buildAccessDiffs(diff KubeconfigDiff, oldCfg, newCfg *clientcmdapi.Config) 
 						authFields = append(authFields, output.FieldChange{Field: "Auth type", Old: "exec-plugin", New: "auth-provider"})
 					}
 					if newAuth.AuthProvider != nil && oldAuth.AuthProvider != nil {
+						if oldAuth.AuthProvider.Name != newAuth.AuthProvider.Name {
+							authFields = append(authFields, output.FieldChange{Field: "Auth provider", Old: oldAuth.AuthProvider.Name, New: newAuth.AuthProvider.Name})
+						}
 						oldFiltered := filterAuthProviderConfig(oldAuth.AuthProvider.Config)
 						newFiltered := filterAuthProviderConfig(newAuth.AuthProvider.Config)
 						for _, k := range sortedKeys(oldFiltered, newFiltered) {
