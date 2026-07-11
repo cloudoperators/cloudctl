@@ -6,6 +6,7 @@ package output
 import (
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"time"
 
@@ -94,6 +95,8 @@ func (p *interactivePrinter) Print(v any) error {
 	switch t := v.(type) {
 	case SyncResult:
 		writeErr = p.printSyncResult(t)
+	case SyncDryRunResult:
+		writeErr = p.printSyncDryRunResult(t)
 	case ClusterVersionResult:
 		w("%s %s\n", styleFaint.Render("Kubernetes version:"), styleBold.Render(t.Version))
 	case VersionInfo:
@@ -198,4 +201,94 @@ func (p *interactivePrinter) printSyncResult(r SyncResult) error {
 	}
 	w("%s\n", summary)
 	return writeErr
+}
+
+func (p *interactivePrinter) printSyncDryRunResult(r SyncDryRunResult) error {
+	var writeErr error
+	w := func(format string, a ...any) {
+		if writeErr != nil {
+			return
+		}
+		_, writeErr = fmt.Fprintf(p.w, format, a...)
+	}
+
+	total := r.Added + r.Removed + r.Modified
+	if total == 0 {
+		w("%s\n", styleFaint.Render("No changes detected."))
+		return writeErr
+	}
+
+	w("%s\n\n", styleFaint.Render("Dry-run: no changes will be written."))
+	w("%s (%d change(s))\n", styleHeader.Render("CLUSTER ACCESSES"), total)
+
+	p.printDryRunDiff(w, r)
+
+	return writeErr
+}
+
+func (p *interactivePrinter) printDryRunDiff(w func(string, ...any), r SyncDryRunResult) {
+	for _, a := range r.Accesses {
+		switch a.ChangeType {
+		case "added":
+			w("%s %s\n", styleGreen.Render("+"), a.Name)
+			if a.Server != "" {
+				w("  %s %-12s  %s\n", styleGreen.Render("+"), "server:", a.Server)
+			}
+		case "removed":
+			w("%s %s\n", styleRed.Render("-"), a.Name)
+			if a.Server != "" {
+				w("  %s %-12s  %s\n", styleRed.Render("-"), "server:", a.Server)
+			}
+		case "modified":
+			w("%s %s\n", styleYellow.Render("~"), a.Name)
+			for _, f := range a.Fields {
+				if f.Field == "Credentials" {
+					w("  %s %-12s  %s\n", styleYellow.Render("~"), "credentials:", styleYellow.Render("changed"))
+				} else if f.Old == f.New {
+					w("  %s %-12s  %s\n", styleYellow.Render("~"), strings.ToLower(f.Field)+":", styleYellow.Render("changed"))
+				} else {
+					label := strings.ToLower(f.Field) + ":"
+					// For per-argument Exec Args diffs, Old=="" means the arg was added
+					// and New=="" means it was removed — print only the present side.
+					if f.Field == "Exec Args" {
+						if f.Old != "" {
+							w("  %s %-12s  %s\n", styleRed.Render("-"), label, styleRed.Render(f.Old))
+						} else {
+							w("  %s %-12s  %s\n", styleGreen.Render("+"), label, styleGreen.Render(f.New))
+						}
+					} else {
+						oldVal := f.Old
+						if oldVal == "" {
+							oldVal = "<empty>"
+						}
+						newVal := f.New
+						if newVal == "" {
+							newVal = "<empty>"
+						}
+						w("  %s %-12s  %s\n", styleRed.Render("-"), label, styleRed.Render(oldVal))
+						w("  %s %-12s  %s\n", styleGreen.Render("+"), label, styleGreen.Render(newVal))
+					}
+				}
+			}
+		}
+	}
+
+	p.printDryRunSummary(w, r)
+}
+
+func (p *interactivePrinter) printDryRunSummary(w func(string, ...any), r SyncDryRunResult) {
+	modBreakdown := modifiedBreakdown(r.Accesses)
+	modSuffix := ""
+	if r.Modified > 0 && len(modBreakdown) > 0 {
+		modSuffix = " (" + strings.Join(modBreakdown, ", ") + ")"
+	}
+	w("\n")
+	summaryParts := []string{
+		styleGreen.Render(fmt.Sprintf("%d added", r.Added)),
+		styleRed.Render(fmt.Sprintf("%d removed", r.Removed)),
+		styleYellow.Render(fmt.Sprintf("%d modified%s", r.Modified, modSuffix)),
+	}
+	w("Summary: %s, %s, %s. %s\n",
+		summaryParts[0], summaryParts[1], summaryParts[2],
+		styleFaint.Render("No changes will be written."))
 }

@@ -209,3 +209,109 @@ func TestStartSpinner_NoOp_JSON(t *testing.T) {
 	stop()
 	g.Expect(buf.String()).To(BeEmpty())
 }
+
+// ---------------------------------------------------------------------------
+// SyncDryRunResult printers
+// ---------------------------------------------------------------------------
+
+func TestPlainPrinter_SyncDryRunResult_Changes(t *testing.T) {
+	g := NewWithT(t)
+	var buf bytes.Buffer
+	p := output.New(output.FormatText, false, &buf)
+
+	result := output.SyncDryRunResult{
+		Accesses: []output.AccessDiff{
+			{Name: "prod-eu-1", ChangeType: "added", Server: "https://prod-eu-1.example.com"},
+			{Name: "staging-de", ChangeType: "removed", Server: "https://staging.example.com"},
+			{Name: "prod-eu-2", ChangeType: "modified", Fields: []output.FieldChange{
+				{Field: "Server", Old: "https://old.example.com", New: "https://new.example.com"},
+			}},
+		},
+		Clusters:  []output.DiffEntry{},
+		Contexts:  []output.DiffEntry{},
+		AuthInfos: []output.DiffEntry{},
+		Added:     1,
+		Removed:   1,
+		Modified:  1,
+	}
+	g.Expect(p.Print(result)).To(Succeed())
+
+	out := buf.String()
+	g.Expect(out).To(ContainSubstring("Dry-run: no changes will be written."))
+	g.Expect(out).To(ContainSubstring("CLUSTER ACCESSES"))
+	g.Expect(out).To(ContainSubstring("+ prod-eu-1"))
+	g.Expect(out).To(ContainSubstring("https://prod-eu-1.example.com"))
+	g.Expect(out).To(ContainSubstring("- staging-de"))
+	g.Expect(out).To(ContainSubstring("~ prod-eu-2"))
+	g.Expect(out).To(ContainSubstring("server")) // change summary column
+	g.Expect(out).To(ContainSubstring("Summary:"))
+	g.Expect(out).To(ContainSubstring("1 added"))
+	g.Expect(out).To(ContainSubstring("1 removed"))
+	g.Expect(out).To(ContainSubstring("1 modified"))
+	g.Expect(out).To(ContainSubstring("No changes will be written."))
+}
+
+func TestPlainPrinter_SyncDryRunResult_NoChanges(t *testing.T) {
+	g := NewWithT(t)
+	var buf bytes.Buffer
+	p := output.New(output.FormatText, false, &buf)
+
+	result := output.SyncDryRunResult{
+		Clusters:  []output.DiffEntry{},
+		Contexts:  []output.DiffEntry{},
+		AuthInfos: []output.DiffEntry{},
+	}
+	g.Expect(p.Print(result)).To(Succeed())
+
+	out := buf.String()
+	g.Expect(out).To(ContainSubstring("No changes detected."))
+}
+
+func TestJSONPrinter_SyncDryRunResult(t *testing.T) {
+	g := NewWithT(t)
+	var buf bytes.Buffer
+	p := output.New(output.FormatJSON, false, &buf)
+
+	result := output.SyncDryRunResult{
+		Clusters: []output.DiffEntry{
+			{Name: "cloudctl:prod", ChangeType: "added"},
+		},
+		Contexts:  []output.DiffEntry{},
+		AuthInfos: []output.DiffEntry{},
+		Added:     1,
+		Removed:   0,
+		Modified:  0,
+	}
+	g.Expect(p.Print(result)).To(Succeed())
+
+	var got output.SyncDryRunResult
+	g.Expect(json.Unmarshal(buf.Bytes(), &got)).To(Succeed())
+	g.Expect(got.Added).To(Equal(1))
+	g.Expect(got.Removed).To(Equal(0))
+	g.Expect(got.Clusters).To(HaveLen(1))
+	g.Expect(got.Clusters[0].Name).To(Equal("cloudctl:prod"))
+	g.Expect(got.Clusters[0].ChangeType).To(Equal("added"))
+}
+
+func TestYAMLPrinter_SyncDryRunResult(t *testing.T) {
+	g := NewWithT(t)
+	var buf bytes.Buffer
+	p := output.New(output.FormatYAML, false, &buf)
+
+	result := output.SyncDryRunResult{
+		Clusters: []output.DiffEntry{
+			{Name: "cloudctl:staging", ChangeType: "removed"},
+		},
+		Contexts:  []output.DiffEntry{},
+		AuthInfos: []output.DiffEntry{},
+		Added:     0,
+		Removed:   1,
+		Modified:  0,
+	}
+	g.Expect(p.Print(result)).To(Succeed())
+
+	var got output.SyncDryRunResult
+	g.Expect(yaml.Unmarshal(buf.Bytes(), &got)).To(Succeed())
+	g.Expect(got.Removed).To(Equal(1))
+	g.Expect(got.Clusters[0].ChangeType).To(Equal("removed"))
+}

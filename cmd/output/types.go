@@ -50,3 +50,36 @@ type VersionInfo struct {
 type ErrorResult struct {
 	Error string `json:"error" yaml:"error"`
 }
+
+// AccessDiff describes one cluster access (context) that is changing.
+type AccessDiff struct {
+	Name       string        `json:"name"             yaml:"name"`
+	ChangeType string        `json:"changeType"       yaml:"changeType"`
+	Server     string        `json:"server,omitempty" yaml:"server,omitempty"`
+	Fields     []FieldChange `json:"fields,omitzero" yaml:"fields,omitempty"`
+}
+
+// SyncDryRunResult is the output of `sync --dry-run`.
+type SyncDryRunResult struct {
+	Accesses  []AccessDiff `json:"accesses"  yaml:"accesses"`
+	Clusters  []DiffEntry  `json:"clusters"  yaml:"clusters"`
+	Contexts  []DiffEntry  `json:"contexts"  yaml:"contexts"`
+	AuthInfos []DiffEntry  `json:"authInfos" yaml:"authInfos"`
+	Added     int          `json:"added"     yaml:"added"`
+	Removed   int          `json:"removed"   yaml:"removed"`
+	Modified  int          `json:"modified"  yaml:"modified"`
+}
+
+// DiffEntry describes a single added, removed, or modified kubeconfig entry.
+type DiffEntry struct {
+	Name       string        `json:"name"             yaml:"name"`
+	ChangeType string        `json:"changeType"       yaml:"changeType"`
+	Fields     []FieldChange `json:"fields,omitzero" yaml:"fields,omitempty"`
+}
+
+// FieldChange describes a field-level change within a modified entry.
+type FieldChange struct {
+	Field string `json:"field" yaml:"field"`
+	Old   string `json:"old"   yaml:"old"`
+	New   string `json:"new"   yaml:"new"`
+}
