@@ -124,14 +124,15 @@ func diffClusters(oldCfg, newCfg *clientcmdapi.Config) []EntryDiff {
 }
 
 // isManagedContext returns true if the context at name references a managed cluster
-// (i.e. a cluster whose name has the managed prefix). Context names themselves are
-// stored without the prefix, so we check the cluster reference instead.
+// in either the old or new config (i.e. a cluster whose name has the managed prefix).
+// Checking both configs ensures that a context reassigned from a managed to an unmanaged
+// cluster is still included in the diff.
 func isManagedContext(name string, oldCfg, newCfg *clientcmdapi.Config) bool {
-	if ctx, ok := newCfg.Contexts[name]; ok && ctx != nil {
-		return isManaged(ctx.Cluster)
+	if ctx, ok := newCfg.Contexts[name]; ok && ctx != nil && isManaged(ctx.Cluster) {
+		return true
 	}
-	if ctx, ok := oldCfg.Contexts[name]; ok && ctx != nil {
-		return isManaged(ctx.Cluster)
+	if ctx, ok := oldCfg.Contexts[name]; ok && ctx != nil && isManaged(ctx.Cluster) {
+		return true
 	}
 	return false
 }
