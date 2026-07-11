@@ -142,6 +142,19 @@ func TestFindAssetURLs_MissingChecksum(t *testing.T) {
 
 // --- downloadChecksum tests ---
 
+func TestDownloadChecksum_EmptyBody(t *testing.T) {
+	g := NewWithT(t)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("   \n"))
+	}))
+	defer srv.Close()
+
+	_, err := downloadChecksumFrom(t.Context(), srv.Client(), srv.URL)
+	g.Expect(err).To(HaveOccurred())
+	g.Expect(err.Error()).To(ContainSubstring("empty"))
+}
+
 func TestDownloadChecksum_OK(t *testing.T) {
 	g := NewWithT(t)
 

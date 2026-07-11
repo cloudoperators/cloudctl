@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/minio/selfupdate"
 	"github.com/spf13/cobra"
@@ -25,6 +26,15 @@ import (
 )
 
 const githubReleasesLatestURL = "https://api.github.com/repos/cloudoperators/cloudctl/releases/latest"
+
+// updateHTTPClient is used for all update-related network calls.
+// ResponseHeaderTimeout prevents hangs on slow/stalled connections while
+// still allowing large archive downloads to stream to completion.
+var updateHTTPClient = &http.Client{
+	Transport: &http.Transport{
+		ResponseHeaderTimeout: 30 * time.Second,
+	},
+}
 
 type ghRelease struct {
 	TagName string    `json:"tag_name"`
@@ -134,7 +144,7 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 }
 
 func fetchLatestRelease(ctx context.Context) (*ghRelease, error) {
-	return fetchLatestReleaseFrom(ctx, http.DefaultClient, githubReleasesLatestURL)
+	return fetchLatestReleaseFrom(ctx, updateHTTPClient, githubReleasesLatestURL)
 }
 
 func fetchLatestReleaseFrom(ctx context.Context, client *http.Client, url string) (*ghRelease, error) {
@@ -143,6 +153,7 @@ func fetchLatestReleaseFrom(ctx context.Context, client *http.Client, url string
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("User-Agent", "cloudctl/"+Version)
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -182,7 +193,7 @@ func findAssetURLs(rel *ghRelease, assetName, checksumName string) (archiveURL, 
 // downloadChecksum fetches a .sha256 file and returns the raw digest bytes.
 // It handles both bare hex strings and BSD-style "<hex>  <filename>" lines.
 func downloadChecksum(ctx context.Context, url string) ([]byte, error) {
-	return downloadChecksumFrom(ctx, http.DefaultClient, url)
+	return downloadChecksumFrom(ctx, updateHTTPClient, url)
 }
 
 func downloadChecksumFrom(ctx context.Context, client *http.Client, url string) ([]byte, error) {
@@ -208,7 +219,11 @@ func downloadChecksumFrom(ctx context.Context, client *http.Client, url string) 
 
 	line := strings.TrimSpace(string(raw))
 	// BSD-style: "<hex>  <filename>" — take the first field.
-	hexStr := strings.Fields(line)[0]
+	fields := strings.Fields(line)
+	if len(fields) == 0 {
+		return nil, fmt.Errorf("checksum file is empty")
+	}
+	hexStr := fields[0]
 
 	digest, err := hex.DecodeString(hexStr)
 	if err != nil {
@@ -220,7 +235,7 @@ func downloadChecksumFrom(ctx context.Context, client *http.Client, url string) 
 // downloadAndExtract downloads the .tar.gz archive, verifies its SHA256 against
 // expectedChecksum, then extracts and returns the cloudctl binary as an io.Reader.
 func downloadAndExtract(ctx context.Context, archiveURL string, expectedChecksum []byte) (io.Reader, error) {
-	return downloadAndExtractFrom(ctx, http.DefaultClient, archiveURL, expectedChecksum)
+	return downloadAndExtractFrom(ctx, updateHTTPClient, archiveURL, expectedChecksum)
 }
 
 func downloadAndExtractFrom(ctx context.Context, client *http.Client, url string, expectedChecksum []byte) (io.Reader, error) {
