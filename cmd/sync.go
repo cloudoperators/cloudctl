@@ -217,8 +217,11 @@ func runSync(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to create server config: %w", err)
 	}
 
-	// Take a snapshot before merge for dry-run diff.
-	localConfigBefore := localConfig.DeepCopy()
+	// Take a snapshot before merge for dry-run diff — only needed when --dry-run is set.
+	var localConfigBefore *clientcmdapi.Config
+	if dryRun {
+		localConfigBefore = localConfig.DeepCopy()
+	}
 
 	spinnerLabel := "Merging kubeconfigs..."
 	if dryRun {
@@ -498,8 +501,9 @@ func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdap
 
 		// Build a reverse lookup of unmanaged local auth entries so we can reuse their names
 		// instead of creating new cloudctl:auth-<hash> entries.
-		// Collect all names per key first, then pick the lexicographically smallest to ensure
-		// deterministic reuse when multiple unmanaged entries share the same key.
+		// Store all candidate names per key; at reuse time we pick the lexicographically
+		// smallest one that actually passes authInfoEqual so that key collisions between
+		// non-equivalent exec-plugin entries (different non-OIDC args) don't cause a miss.
 		keyToNames := make(map[string][]string)
 		for localName, localAuth := range localConfig.AuthInfos {
 			if !isManaged(localName) {
@@ -507,9 +511,9 @@ func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdap
 				keyToNames[key] = append(keyToNames[key], localName)
 			}
 		}
-		existingLocalKeys := make(map[string]string, len(keyToNames)) // authInfoKey → local name
-		for key, names := range keyToNames {
-			existingLocalKeys[key] = slices.Min(names)
+		// Pre-sort each candidate list so iteration order is deterministic.
+		for key := range keyToNames {
+			slices.Sort(keyToNames[key])
 		}
 
 		// Merge AuthInfos
@@ -517,35 +521,42 @@ func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdap
 			uniqueKey := generateAuthInfoKey(serverAuth)
 
 			// If an unmanaged local entry has the same credentials, reuse its name.
-			// Gate on authInfoEqual (excluding tokens) so we don't rewire a context
-			// to an unmanaged entry whose non-OIDC fields differ from the server config.
-			if localName, found := existingLocalKeys[uniqueKey]; found {
+			// Iterate candidates in sorted order and pick the first that passes
+			// authInfoEqual — handles key collisions where only some entries are
+			// actually equivalent (e.g. differing in non-OIDC exec args).
+			for _, localName := range keyToNames[uniqueKey] {
 				localAuth := localConfig.AuthInfos[localName]
+				if localAuth == nil {
+					continue
+				}
 				if authInfoEqual(localAuth, serverAuth) {
 					slog.Debug("reusing existing local authinfo", "name", localName, "server", serverName)
 					// Credentials are identical — leave the unmanaged local entry untouched
 					// to preserve any local-only fields (Token, TokenFile, Impersonate, etc.)
 					// that are outside authInfoEqual's comparison scope.
 					authInfoMap[uniqueKey] = localName
-					continue
+					goto nextServerAuth
 				}
 			}
 
-			hash := sha256.Sum256([]byte(uniqueKey))
-			hashString := hex.EncodeToString(hash[:])[:16] // Using the first 16 chars for brevity
-			managedAuthName := fmt.Sprintf("%s:auth-%s", prefix, hashString)
+			{
+				hash := sha256.Sum256([]byte(uniqueKey))
+				hashString := hex.EncodeToString(hash[:])[:16] // Using the first 16 chars for brevity
+				managedAuthName := fmt.Sprintf("%s:auth-%s", prefix, hashString)
 
-			// Merge AuthInfo to preserve id-token and refresh-token
-			if existingAuth, exists := localConfig.AuthInfos[managedAuthName]; exists {
-				slog.Debug("merging authinfo tokens", "name", managedAuthName, "server", serverName)
-				mergedAuth := mergeAuthInfo(serverAuth, existingAuth)
-				localConfig.AuthInfos[managedAuthName] = mergedAuth
-			} else {
-				slog.Debug("adding authinfo", "name", managedAuthName, "server", serverName)
-				localConfig.AuthInfos[managedAuthName] = serverAuth
+				// Merge AuthInfo to preserve id-token and refresh-token
+				if existingAuth, exists := localConfig.AuthInfos[managedAuthName]; exists {
+					slog.Debug("merging authinfo tokens", "name", managedAuthName, "server", serverName)
+					mergedAuth := mergeAuthInfo(serverAuth, existingAuth)
+					localConfig.AuthInfos[managedAuthName] = mergedAuth
+				} else {
+					slog.Debug("adding authinfo", "name", managedAuthName, "server", serverName)
+					localConfig.AuthInfos[managedAuthName] = serverAuth
+				}
+
+				authInfoMap[uniqueKey] = managedAuthName
 			}
-
-			authInfoMap[uniqueKey] = managedAuthName
+		nextServerAuth:
 		}
 	} else {
 		// Without merging, manage AuthInfos normally
