@@ -159,7 +159,7 @@ func fetchLatestReleaseFrom(ctx context.Context, client *http.Client, url string
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("GitHub API returned HTTP %d", resp.StatusCode)
@@ -206,7 +206,7 @@ func downloadChecksumFrom(ctx context.Context, client *http.Client, url string) 
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("downloading checksum: HTTP %d", resp.StatusCode)
@@ -248,7 +248,7 @@ func downloadAndExtractFrom(ctx context.Context, client *http.Client, url string
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("downloading archive: HTTP %d", resp.StatusCode)
@@ -270,7 +270,7 @@ func downloadAndExtractFrom(ctx context.Context, client *http.Client, url string
 	if err != nil {
 		return nil, fmt.Errorf("decompressing archive: %w", err)
 	}
-	defer gz.Close()
+	defer func() { _ = gz.Close() }()
 
 	tr := tar.NewReader(gz)
 	for {
