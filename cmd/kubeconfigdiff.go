@@ -190,6 +190,15 @@ func diffAuthInfos(oldCfg, newCfg *clientcmdapi.Config) []EntryDiff {
 		var fields []FieldDiff
 		// Exec-based diff
 		if newAuth.Exec != nil && oldAuth.Exec != nil {
+			if oldAuth.Exec.Command != newAuth.Exec.Command {
+				fields = append(fields, FieldDiff{Field: "Exec Command", Old: oldAuth.Exec.Command, New: newAuth.Exec.Command})
+			}
+			if oldAuth.Exec.APIVersion != newAuth.Exec.APIVersion {
+				fields = append(fields, FieldDiff{Field: "Exec API version", Old: oldAuth.Exec.APIVersion, New: newAuth.Exec.APIVersion})
+			}
+			if oldAuth.Exec.InteractiveMode != newAuth.Exec.InteractiveMode {
+				fields = append(fields, FieldDiff{Field: "Exec interactive mode", Old: string(oldAuth.Exec.InteractiveMode), New: string(newAuth.Exec.InteractiveMode)})
+			}
 			fields = append(fields, argsDiff(oldAuth.Exec.Args, newAuth.Exec.Args)...)
 		} else if newAuth.Exec != nil && oldAuth.Exec == nil {
 			fields = append(fields, FieldDiff{Field: "Auth type", Old: "auth-provider", New: "exec-plugin"})
@@ -257,9 +266,11 @@ func redactArg(arg string) string {
 
 // argsDiff computes per-argument differences between two exec arg lists, returning
 // FieldDiff entries for args that appear only in old (removed) or only in new (added).
-// Values of sensitive flags (e.g. --oidc-client-secret=) are redacted.
+// Values of sensitive flags (e.g. --oidc-client-secret=) are redacted, with the flag
+// prefix preserved (e.g. "--oidc-client-secret=<redacted>").
 // When a sensitive flag appears in both removed and added (value changed), a single
-// entry with Old and New both set to "<redacted>" is emitted rather than separate lines.
+// entry with Old and New both set to "<prefix><redacted>" is emitted rather than
+// separate lines.
 func argsDiff(oldArgs, newArgs []string) []FieldDiff {
 	oldSet := make(map[string]bool, len(oldArgs))
 	for _, a := range oldArgs {

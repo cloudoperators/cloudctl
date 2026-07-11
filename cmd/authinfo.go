@@ -99,9 +99,12 @@ func filterAuthProviderConfig(config map[string]string) map[string]string {
 	return filtered
 }
 
-// generateAuthInfoKey creates a unique key for an AuthInfo based on specific AuthProvider fields,
-// excluding "id-token" and "refresh-token". It uses "idp-issuer-url", "client-id", "client-secret",
-// "auth-request-extra-params", and "extra-scopes" to generate the key.
+// generateAuthInfoKey creates a stable deduplication key for an AuthInfo that is
+// exactly as discriminating as authInfoEqual:
+//   - Exec-based: includes Command, APIVersion, InteractiveMode, Env, and all Args.
+//   - AuthProvider-based: includes the provider Name and the full filtered config
+//     (all keys except "id-token" and "refresh-token"), sorted for stability.
+//   - Certificate-based: SHA-256 of ClientCertificateData + ClientKeyData.
 func generateAuthInfoKey(authInfo *clientcmdapi.AuthInfo) string {
 	// Exec-based key: derive from stable subset of args to avoid including tokens
 	if authInfo.Exec != nil {
