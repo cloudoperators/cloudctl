@@ -248,12 +248,16 @@ func (p *interactivePrinter) printDryRunDiff(w func(string, ...any), r SyncDryRu
 					w("  %s %-12s  %s\n", styleYellow.Render("~"), strings.ToLower(f.Field)+":", styleYellow.Render("changed"))
 				} else {
 					label := strings.ToLower(f.Field) + ":"
-					if f.Old != "" {
-						w("  %s %-12s  %s\n", styleRed.Render("-"), label, styleRed.Render(f.Old))
+					oldVal := f.Old
+					if oldVal == "" {
+						oldVal = "<empty>"
 					}
-					if f.New != "" {
-						w("  %s %-12s  %s\n", styleGreen.Render("+"), label, styleGreen.Render(f.New))
+					newVal := f.New
+					if newVal == "" {
+						newVal = "<empty>"
 					}
+					w("  %s %-12s  %s\n", styleRed.Render("-"), label, styleRed.Render(oldVal))
+					w("  %s %-12s  %s\n", styleGreen.Render("+"), label, styleGreen.Render(newVal))
 				}
 			}
 		}
