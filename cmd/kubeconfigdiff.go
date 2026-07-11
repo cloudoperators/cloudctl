@@ -272,24 +272,29 @@ func redactArg(arg string) string {
 // entry with Old and New both set to "<prefix><redacted>" is emitted rather than
 // separate lines.
 func argsDiff(oldArgs, newArgs []string) []FieldDiff {
-	oldSet := make(map[string]bool, len(oldArgs))
+	// Use frequency maps so duplicate arguments (e.g. repeated --oidc-extra-scope)
+	// are handled correctly: an arg is "removed" if it appears more times in
+	// oldArgs than newArgs, and "added" if the opposite.
+	oldCount := make(map[string]int, len(oldArgs))
 	for _, a := range oldArgs {
-		oldSet[a] = true
+		oldCount[a]++
 	}
-	newSet := make(map[string]bool, len(newArgs))
+	newCount := make(map[string]int, len(newArgs))
 	for _, a := range newArgs {
-		newSet[a] = true
+		newCount[a]++
 	}
 
 	var removed, added []string
 	for _, a := range oldArgs {
-		if !newSet[a] {
+		if oldCount[a] > newCount[a] {
 			removed = append(removed, a)
+			oldCount[a]-- // consume one occurrence so duplicates are counted once each
 		}
 	}
 	for _, a := range newArgs {
-		if !oldSet[a] {
+		if newCount[a] > oldCount[a] {
 			added = append(added, a)
+			newCount[a]--
 		}
 	}
 

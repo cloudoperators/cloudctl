@@ -99,12 +99,19 @@ func filterAuthProviderConfig(config map[string]string) map[string]string {
 	return filtered
 }
 
-// generateAuthInfoKey creates a stable deduplication key for an AuthInfo that is
-// exactly as discriminating as authInfoEqual:
-//   - Exec-based: includes Command, APIVersion, InteractiveMode, Env, and all Args.
-//   - AuthProvider-based: includes the provider Name and the full filtered config
+// generateAuthInfoKey creates a stable deduplication key for an AuthInfo.
+// The key intentionally uses a subset of fields so that tokens and irrelevant
+// args do not prevent deduplication of otherwise-identical credentials:
+//   - Exec-based: Command, APIVersion, InteractiveMode, Env, and the OIDC-
+//     related flag values (issuer, client-id, client-secret, extra-params,
+//     scopes). Non-OIDC extra args are intentionally excluded.
+//   - AuthProvider-based: provider Name plus the full filtered config
 //     (all keys except "id-token" and "refresh-token"), sorted for stability.
 //   - Certificate-based: SHA-256 of ClientCertificateData + ClientKeyData.
+//
+// Note: authInfoEqual compares the full Exec.Args slice, so two authinfos that
+// differ only in non-OIDC extra args will have the same key but fail equality.
+// The reuse path in mergeKubeconfig guards against this with authInfoEqual.
 func generateAuthInfoKey(authInfo *clientcmdapi.AuthInfo) string {
 	// Exec-based key: derive from stable subset of args to avoid including tokens
 	if authInfo.Exec != nil {
