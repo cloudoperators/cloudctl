@@ -51,6 +51,22 @@ type ErrorResult struct {
 	Error string `json:"error" yaml:"error"`
 }
 
+// UpdateStatus represents the outcome of an update check or install.
+type UpdateStatus string
+
+const (
+	UpdateStatusUpToDate  UpdateStatus = "up-to-date"
+	UpdateStatusAvailable UpdateStatus = "available"
+	UpdateStatusUpdated   UpdateStatus = "updated"
+)
+
+// UpdateResult is the output of the update command.
+type UpdateResult struct {
+	CurrentVersion string       `json:"currentVersion" yaml:"currentVersion"`
+	LatestVersion  string       `json:"latestVersion"  yaml:"latestVersion"`
+	Status         UpdateStatus `json:"status"         yaml:"status"`
+}
+
 // AccessDiff describes one cluster access (context) that is changing.
 type AccessDiff struct {
 	Name       string        `json:"name"             yaml:"name"`

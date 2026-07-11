@@ -30,6 +30,7 @@ Commands:
   sync              Fetch ClusterKubeconfigs from Greenhouse and merge them locally
   cluster-version   Query the Kubernetes server version of a kubeconfig context
   version           Print cloudctl build information
+  update            Check for and install the latest cloudctl release
 
 Global flags available on every command:
   -o, --output text|json|yaml   Output format (default: text)
@@ -86,6 +87,7 @@ func init() {
 	rootCmd.AddCommand(syncCmd)
 	rootCmd.AddCommand(clusterVersionCmd)
 	rootCmd.AddCommand(versionCmd)
+	rootCmd.AddCommand(updateCmd)
 }
 
 // configWithContext builds a rest.Config for the specified context name from the given kubeconfig path.

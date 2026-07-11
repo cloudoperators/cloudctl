@@ -31,6 +31,7 @@ replace (
 )
 
 require (
+	aead.dev/minisign v0.2.0 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/charmbracelet/colorprofile v0.4.1 // indirect
 	github.com/charmbracelet/x/ansi v0.11.6 // indirect
@@ -73,6 +74,7 @@ require (
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mattn/go-localereader v0.0.1 // indirect
 	github.com/mattn/go-runewidth v0.0.19 // indirect
+	github.com/minio/selfupdate v0.6.0 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee // indirect
 	github.com/muesli/ansi v0.0.0-20230316100256-276c6243b2f6 // indirect
@@ -93,6 +95,7 @@ require (
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	go.yaml.in/yaml/v2 v2.4.3 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
+	golang.org/x/crypto v0.51.0 // indirect
 	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/oauth2 v0.34.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect

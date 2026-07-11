@@ -87,6 +87,17 @@ func (p *plainPrinter) Print(v any) error {
 		w("  build date: %s\n", t.BuildDate)
 		w("  go:         %s %s %s\n", t.GoVersion, t.Compiler, t.Platform)
 
+	case UpdateResult:
+		switch t.Status {
+		case UpdateStatusUpToDate:
+			w("cloudctl is up to date (%s).\n", t.CurrentVersion)
+		case UpdateStatusAvailable:
+			w("A new version is available: %s (current: %s)\n", t.LatestVersion, t.CurrentVersion)
+			w("Run `cloudctl update` to install it.\n")
+		case UpdateStatusUpdated:
+			w("cloudctl updated: %s -> %s\n", t.CurrentVersion, t.LatestVersion)
+		}
+
 	default:
 		w("%v\n", v)
 	}
