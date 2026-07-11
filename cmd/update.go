@@ -28,13 +28,20 @@ import (
 const githubReleasesLatestURL = "https://api.github.com/repos/cloudoperators/cloudctl/releases/latest"
 
 // updateHTTPClient is used for all update-related network calls.
-// It clones http.DefaultTransport so proxy settings, TLS config, and HTTP/2
-// support are preserved, then sets ResponseHeaderTimeout to prevent hangs on
-// stalled connections while still allowing large archive downloads to complete.
+// It clones http.DefaultTransport (when it is a *http.Transport) so proxy
+// settings, TLS config, and HTTP/2 support are preserved, then sets
+// ResponseHeaderTimeout to prevent hangs on stalled connections while still
+// allowing large archive downloads to complete.
 var updateHTTPClient = func() *http.Client {
-	t := http.DefaultTransport.(*http.Transport).Clone()
-	t.ResponseHeaderTimeout = 30 * time.Second
-	return &http.Client{Transport: t}
+	var transport http.RoundTripper
+	if dt, ok := http.DefaultTransport.(*http.Transport); ok {
+		t := dt.Clone()
+		t.ResponseHeaderTimeout = 30 * time.Second
+		transport = t
+	} else {
+		transport = http.DefaultTransport
+	}
+	return &http.Client{Transport: transport}
 }()
 
 type ghRelease struct {
@@ -213,9 +220,13 @@ func downloadChecksumFrom(ctx context.Context, client *http.Client, url string) 
 		return nil, fmt.Errorf("downloading checksum: HTTP %d", resp.StatusCode)
 	}
 
-	raw, err := io.ReadAll(resp.Body)
+	const maxChecksumSize = 4 << 10 // 4 KiB — far more than any checksum line needs
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxChecksumSize+1))
 	if err != nil {
 		return nil, err
+	}
+	if int64(len(raw)) > maxChecksumSize {
+		return nil, fmt.Errorf("checksum file exceeds maximum allowed size of 4 KiB")
 	}
 
 	line := strings.TrimSpace(string(raw))

@@ -122,6 +122,8 @@ func (p *interactivePrinter) Print(v any) error {
 				styleGreen.Render("->"),
 				styleBold.Render(t.LatestVersion),
 			)
+		default:
+			w("cloudctl update status: %s (current: %s, latest: %s)\n", t.Status, t.CurrentVersion, t.LatestVersion)
 		}
 	default:
 		w("%v\n", v)

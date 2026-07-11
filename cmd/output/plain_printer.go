@@ -96,6 +96,8 @@ func (p *plainPrinter) Print(v any) error {
 			w("Run `cloudctl update` to install it.\n")
 		case UpdateStatusUpdated:
 			w("cloudctl updated: %s -> %s\n", t.CurrentVersion, t.LatestVersion)
+		default:
+			w("cloudctl update status: %s (current: %s, latest: %s)\n", t.Status, t.CurrentVersion, t.LatestVersion)
 		}
 
 	default:
