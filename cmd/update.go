@@ -21,6 +21,7 @@ import (
 	"github.com/minio/selfupdate"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"golang.org/x/mod/semver"
 
 	"github.com/cloudoperators/cloudctl/cmd/output"
 )
@@ -29,9 +30,10 @@ const githubReleasesLatestURL = "https://api.github.com/repos/cloudoperators/clo
 
 // updateHTTPClient is used for all update-related network calls.
 // It clones http.DefaultTransport (when it is a *http.Transport) so proxy
-// settings, TLS config, and HTTP/2 support are preserved, then sets
-// ResponseHeaderTimeout to prevent hangs on stalled connections while still
-// allowing large archive downloads to complete.
+// settings, TLS config, and HTTP/2 support are preserved.
+// ResponseHeaderTimeout (30s) prevents hangs waiting for response headers.
+// Timeout (10m) provides a hard upper bound on total request time, allowing
+// large archive downloads to complete while still bounding worst-case duration.
 var updateHTTPClient = func() *http.Client {
 	var transport http.RoundTripper
 	if dt, ok := http.DefaultTransport.(*http.Transport); ok {
@@ -41,7 +43,10 @@ var updateHTTPClient = func() *http.Client {
 	} else {
 		transport = http.DefaultTransport
 	}
-	return &http.Client{Transport: transport}
+	return &http.Client{
+		Transport: transport,
+		Timeout:   10 * time.Minute,
+	}
 }()
 
 type ghRelease struct {
@@ -112,7 +117,15 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 		LatestVersion:  rel.TagName,
 	}
 
-	if currentVersion == rel.TagName {
+	// Use semver comparison so that current >= latest (e.g., pre-release or newer
+	// self-built version) is reported as up-to-date rather than triggering a downgrade.
+	// If either version is not a valid semver string, fall back to string equality.
+	if semver.IsValid(currentVersion) && semver.IsValid(rel.TagName) {
+		if semver.Compare(currentVersion, rel.TagName) >= 0 {
+			result.Status = output.UpdateStatusUpToDate
+			return printer.Print(result)
+		}
+	} else if currentVersion == rel.TagName {
 		result.Status = output.UpdateStatusUpToDate
 		return printer.Print(result)
 	}
@@ -124,6 +137,10 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 
 	assetName := fmt.Sprintf("cloudctl_%s_%s.tar.gz", runtime.GOOS, runtime.GOARCH)
 	checksumName := assetName + ".sha256"
+
+	if runtime.GOOS == "windows" {
+		return fmt.Errorf("self-update on Windows is not yet supported (releases use .zip archives); please download manually from https://github.com/cloudoperators/cloudctl/releases")
+	}
 
 	archiveURL, checksumURL, err := findAssetURLs(rel, assetName, checksumName)
 	if err != nil {
