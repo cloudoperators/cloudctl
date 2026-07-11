@@ -144,18 +144,17 @@ func generateAuthInfoKey(authInfo *clientcmdapi.AuthInfo) string {
 		return fmt.Sprintf("cert:%s", hex.EncodeToString(h.Sum(nil)))
 	}
 
-	// Extract the required fields from AuthProvider Config, including idp-issuer-url
-	// to avoid incorrectly deduplicating clusters with different issuers but same client-id.
-	issuerURL := authInfo.AuthProvider.Config["idp-issuer-url"]
-	clientID := authInfo.AuthProvider.Config["client-id"]
-	clientSecret := authInfo.AuthProvider.Config["client-secret"]
-	authRequestExtraParams := authInfo.AuthProvider.Config["auth-request-extra-params"]
-	extraScopes := authInfo.AuthProvider.Config["extra-scopes"]
-
-	// Concatenate the fields in a consistent order, including the provider name
-	// to prevent collisions between different auth-provider types.
-	data := fmt.Sprintf("name:%s;idp-issuer-url:%s;client-id:%s;client-secret:%s;auth-request-extra-params:%s;extra-scopes:%s",
-		authInfo.AuthProvider.Name, issuerURL, clientID, clientSecret, authRequestExtraParams, extraScopes)
+	// Hash the full filtered config (same set authInfoEqual compares) so the key
+	// is exactly as discriminating as the equality check. Sorting the keys ensures
+	// a stable hash regardless of map iteration order.
+	filtered := filterAuthProviderConfig(authInfo.AuthProvider.Config)
+	keys := slices.Sorted(maps.Keys(filtered))
+	var parts []string
+	for _, k := range keys {
+		parts = append(parts, k+"="+filtered[k])
+	}
+	data := fmt.Sprintf("name:%s;config:%s",
+		authInfo.AuthProvider.Name, strings.Join(parts, ";"))
 
 	return data
 }
