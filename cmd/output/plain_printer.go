@@ -183,7 +183,7 @@ func modifiedBreakdown(accesses []AccessDiff) []string {
 				cat = "ca"
 			case f.Field == "Labels":
 				cat = "labels"
-			case f.Field == "Exec Args" || f.Field == "Auth type":
+			case f.Field == "Exec Args" || f.Field == "Auth type" || f.Field == "Auth provider":
 				cat = "credentials"
 			case strings.HasPrefix(f.Field, "Exec "):
 				cat = "credentials"

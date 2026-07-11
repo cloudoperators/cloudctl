@@ -16,7 +16,12 @@ import (
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
 
-// authInfoEqual compares two AuthInfo objects, excluding "id-token" and "refresh-token".
+// authInfoEqual compares the credential-bearing fields of two AuthInfo objects
+// for deduplication purposes. It compares ClientCertificateData, ClientKeyData,
+// Exec (all fields except tokens), and AuthProvider (name + config, excluding
+// "id-token" and "refresh-token"). Fields that carry local-only or session state
+// (Token, TokenFile, Username, Password, Impersonate, etc.) are intentionally
+// not compared so that local customisations do not prevent deduplication.
 func authInfoEqual(a, b *clientcmdapi.AuthInfo) bool {
 	if a == nil && b == nil {
 		return true
