@@ -106,26 +106,30 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("checking for updates: %w", err)
 	}
 
-	// Normalise the local version to a "v" prefix for comparison.
+	// Normalise both versions to a "v" prefix for semver comparison.
 	currentVersion := Version
 	if !strings.HasPrefix(currentVersion, "v") {
 		currentVersion = "v" + currentVersion
 	}
+	latestVersion := rel.TagName
+	if !strings.HasPrefix(latestVersion, "v") {
+		latestVersion = "v" + latestVersion
+	}
 
 	result := output.UpdateResult{
 		CurrentVersion: currentVersion,
-		LatestVersion:  rel.TagName,
+		LatestVersion:  latestVersion,
 	}
 
 	// Use semver comparison so that current >= latest (e.g., pre-release or newer
 	// self-built version) is reported as up-to-date rather than triggering a downgrade.
 	// If either version is not a valid semver string, fall back to string equality.
-	if semver.IsValid(currentVersion) && semver.IsValid(rel.TagName) {
-		if semver.Compare(currentVersion, rel.TagName) >= 0 {
+	if semver.IsValid(currentVersion) && semver.IsValid(latestVersion) {
+		if semver.Compare(currentVersion, latestVersion) >= 0 {
 			result.Status = output.UpdateStatusUpToDate
 			return printer.Print(result)
 		}
-	} else if currentVersion == rel.TagName {
+	} else if currentVersion == latestVersion {
 		result.Status = output.UpdateStatusUpToDate
 		return printer.Print(result)
 	}
@@ -147,7 +151,7 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	stop = printer.StartSpinner(fmt.Sprintf("Downloading %s...", rel.TagName))
+	stop = printer.StartSpinner(fmt.Sprintf("Downloading %s...", latestVersion))
 	expectedChecksum, err := downloadChecksum(cmd.Context(), checksumURL)
 	if err != nil {
 		stop()
@@ -234,7 +238,7 @@ func downloadChecksumFrom(ctx context.Context, client *http.Client, url string) 
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("downloading checksum: HTTP %d", resp.StatusCode)
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 
 	const maxChecksumSize = 4 << 10 // 4 KiB — far more than any checksum line needs
@@ -321,9 +325,13 @@ func downloadAndExtractFrom(ctx context.Context, client *http.Client, url string
 			if hdr.Typeflag != tar.TypeReg {
 				return nil, fmt.Errorf("archive entry %q is not a regular file (type %d)", hdr.Name, hdr.Typeflag)
 			}
-			binaryBytes, err := io.ReadAll(tr)
+			const maxBinarySize = 128 << 20 // 128 MiB
+			binaryBytes, err := io.ReadAll(io.LimitReader(tr, maxBinarySize+1))
 			if err != nil {
 				return nil, fmt.Errorf("reading binary from archive: %w", err)
+			}
+			if int64(len(binaryBytes)) > maxBinarySize {
+				return nil, fmt.Errorf("binary exceeds maximum allowed size of 128 MiB")
 			}
 			return bytes.NewReader(binaryBytes), nil
 		}
