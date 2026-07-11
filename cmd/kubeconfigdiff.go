@@ -78,8 +78,11 @@ func diffClusters(oldCfg, newCfg *clientcmdapi.Config) []EntryDiff {
 		if !isManaged(name) {
 			continue
 		}
+		if newCluster == nil {
+			continue
+		}
 		oldCluster, exists := oldCfg.Clusters[name]
-		if !exists {
+		if !exists || oldCluster == nil {
 			diffs = append(diffs, EntryDiff{Name: name, ChangeType: DiffChangeAdded})
 			continue
 		}
@@ -103,11 +106,15 @@ func diffClusters(oldCfg, newCfg *clientcmdapi.Config) []EntryDiff {
 	}
 
 	// Removed from old
-	for name := range oldCfg.Clusters {
+	for name, oldCluster := range oldCfg.Clusters {
 		if !isManaged(name) {
 			continue
 		}
-		if _, exists := newCfg.Clusters[name]; !exists {
+		if oldCluster == nil {
+			continue
+		}
+		newCluster, exists := newCfg.Clusters[name]
+		if !exists || newCluster == nil {
 			diffs = append(diffs, EntryDiff{Name: name, ChangeType: DiffChangeRemoved})
 		}
 	}
@@ -120,10 +127,10 @@ func diffClusters(oldCfg, newCfg *clientcmdapi.Config) []EntryDiff {
 // (i.e. a cluster whose name has the managed prefix). Context names themselves are
 // stored without the prefix, so we check the cluster reference instead.
 func isManagedContext(name string, oldCfg, newCfg *clientcmdapi.Config) bool {
-	if ctx, ok := newCfg.Contexts[name]; ok {
+	if ctx, ok := newCfg.Contexts[name]; ok && ctx != nil {
 		return isManaged(ctx.Cluster)
 	}
-	if ctx, ok := oldCfg.Contexts[name]; ok {
+	if ctx, ok := oldCfg.Contexts[name]; ok && ctx != nil {
 		return isManaged(ctx.Cluster)
 	}
 	return false
@@ -138,8 +145,11 @@ func diffContexts(oldCfg, newCfg *clientcmdapi.Config) []EntryDiff {
 		if !isManagedContext(name, oldCfg, newCfg) {
 			continue
 		}
+		if newCtx == nil {
+			continue
+		}
 		oldCtx, exists := oldCfg.Contexts[name]
-		if !exists {
+		if !exists || oldCtx == nil {
 			diffs = append(diffs, EntryDiff{Name: name, ChangeType: DiffChangeAdded})
 			continue
 		}
@@ -158,11 +168,15 @@ func diffContexts(oldCfg, newCfg *clientcmdapi.Config) []EntryDiff {
 		}
 	}
 
-	for name := range oldCfg.Contexts {
+	for name, oldCtx := range oldCfg.Contexts {
 		if !isManagedContext(name, oldCfg, newCfg) {
 			continue
 		}
-		if _, exists := newCfg.Contexts[name]; !exists {
+		if oldCtx == nil {
+			continue
+		}
+		newCtx, exists := newCfg.Contexts[name]
+		if !exists || newCtx == nil {
 			diffs = append(diffs, EntryDiff{Name: name, ChangeType: DiffChangeRemoved})
 		}
 	}
@@ -421,14 +435,14 @@ func buildAccessDiffs(diff KubeconfigDiff, oldCfg, newCfg *clientcmdapi.Config) 
 
 		switch ctxDiff.ChangeType {
 		case DiffChangeAdded:
-			if ctx, ok := newCfg.Contexts[name]; ok {
-				if cluster, ok := newCfg.Clusters[ctx.Cluster]; ok {
+			if ctx, ok := newCfg.Contexts[name]; ok && ctx != nil {
+				if cluster, ok := newCfg.Clusters[ctx.Cluster]; ok && cluster != nil {
 					entry.access.Server = cluster.Server
 				}
 			}
 		case DiffChangeRemoved:
-			if ctx, ok := oldCfg.Contexts[name]; ok {
-				if cluster, ok := oldCfg.Clusters[ctx.Cluster]; ok {
+			if ctx, ok := oldCfg.Contexts[name]; ok && ctx != nil {
+				if cluster, ok := oldCfg.Clusters[ctx.Cluster]; ok && cluster != nil {
 					entry.access.Server = cluster.Server
 				}
 			}
@@ -552,6 +566,9 @@ func buildAccessDiffs(diff KubeconfigDiff, oldCfg, newCfg *clientcmdapi.Config) 
 	}
 	if len(modifiedClusters) > 0 {
 		for ctxName, ctx := range newCfg.Contexts {
+			if ctx == nil {
+				continue
+			}
 			clusterDiff, affected := modifiedClusters[ctx.Cluster]
 			if !affected {
 				continue
@@ -596,6 +613,9 @@ func buildAccessDiffs(diff KubeconfigDiff, oldCfg, newCfg *clientcmdapi.Config) 
 	}
 	if len(modifiedAuthInfos) > 0 {
 		for ctxName, ctx := range newCfg.Contexts {
+			if ctx == nil {
+				continue
+			}
 			ad, affected := modifiedAuthInfos[ctx.AuthInfo]
 			if !affected {
 				continue
