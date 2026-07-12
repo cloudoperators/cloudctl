@@ -171,7 +171,7 @@ func runSync(cmd *cobra.Command, args []string) error {
 	)
 	centralConfig, err = configWithContext(greenhouseClusterContext, greenhouseClusterKubeconfig)
 	if err != nil {
-		return fmt.Errorf("failed to build greenhouse kubeconfig: %w", err)
+		return fmt.Errorf("failed to build greenhouse kubeconfig (source: %s, context: %s): %w", displayKubeconfig(greenhouseClusterKubeconfig), ctxLabel, err)
 	}
 
 	// Create a scheme and register Greenhouse types.
