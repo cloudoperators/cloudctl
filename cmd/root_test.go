@@ -90,32 +90,37 @@ func TestMissingConfigurationFile(t *testing.T) {
 	g.Expect(err).NotTo(BeNil())
 }
 
-func TestResolveKubeconfig_ExplicitNonDefault(t *testing.T) {
+func TestResolveKubeconfig_ExplicitlySet(t *testing.T) {
 	g := NewWithT(t)
 
 	t.Setenv("KUBECONFIG", "/some/other/config")
+	t.Cleanup(func() { viper.Reset() })
 
-	// An explicit non-default path must be returned unchanged regardless of KUBECONFIG.
-	result := resolveKubeconfig("/my/explicit/path")
+	// When the viper key is explicitly set (simulating flag/CLOUDCTL_* env var),
+	// the provided value must be returned as-is regardless of KUBECONFIG.
+	viper.Set("kubeconfig", "/my/explicit/path")
+	result := resolveKubeconfig("kubeconfig", "/my/explicit/path")
 	g.Expect(result).To(Equal("/my/explicit/path"))
 }
 
-func TestResolveKubeconfig_DefaultWithKUBECONFIGSet(t *testing.T) {
+func TestResolveKubeconfig_NotSetWithKUBECONFIG(t *testing.T) {
 	g := NewWithT(t)
 
 	t.Setenv("KUBECONFIG", "/env/kubeconfig")
+	t.Cleanup(func() { viper.Reset() })
 
-	// When the value is the default and KUBECONFIG is set, return "" to let client-go handle it.
-	result := resolveKubeconfig(clientcmd.RecommendedHomeFile)
+	// When the key was not explicitly set and KUBECONFIG is set, return "" to let client-go handle it.
+	result := resolveKubeconfig("kubeconfig", clientcmd.RecommendedHomeFile)
 	g.Expect(result).To(BeEmpty())
 }
 
-func TestResolveKubeconfig_DefaultWithoutKUBECONFIG(t *testing.T) {
+func TestResolveKubeconfig_NotSetWithoutKUBECONFIG(t *testing.T) {
 	g := NewWithT(t)
 
 	t.Setenv("KUBECONFIG", "")
+	t.Cleanup(func() { viper.Reset() })
 
-	// When KUBECONFIG is not set, return the default path as-is.
-	result := resolveKubeconfig(clientcmd.RecommendedHomeFile)
+	// When KUBECONFIG is not set either, return the default path as-is.
+	result := resolveKubeconfig("kubeconfig", clientcmd.RecommendedHomeFile)
 	g.Expect(result).To(Equal(clientcmd.RecommendedHomeFile))
 }

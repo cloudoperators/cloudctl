@@ -91,11 +91,12 @@ func init() {
 }
 
 // resolveKubeconfig returns the kubeconfig path to use.
-// When the value equals the default (~/.kube/config) and the KUBECONFIG env var
-// is set, it returns "" so that client-go uses its standard multi-file loading rules.
-// An explicit non-default path is always returned as-is.
-func resolveKubeconfig(flagValue string) string {
-	if flagValue != clientcmd.RecommendedHomeFile {
+// viperKey is the viper key for the flag (e.g. "kubeconfig", "greenhouse-cluster-kubeconfig").
+// When the key was not explicitly set by the user (via flag or CLOUDCTL_* env var) and the
+// standard KUBECONFIG env var is set, it returns "" so that client-go uses its standard
+// multi-file loading rules. An explicitly provided value is always returned as-is.
+func resolveKubeconfig(viperKey, flagValue string) string {
+	if viper.IsSet(viperKey) {
 		return flagValue
 	}
 	if os.Getenv("KUBECONFIG") != "" {

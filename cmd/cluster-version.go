@@ -56,7 +56,7 @@ var (
 )
 
 func runClusterVersion(cmd *cobra.Command, args []string) error {
-	kubeconfig = resolveKubeconfig(viper.GetString("kubeconfig"))
+	kubeconfig = resolveKubeconfig("kubeconfig", viper.GetString("kubeconfig"))
 	kubecontext = viper.GetString("context")
 
 	timeoutStr := viper.GetString("timeout")
@@ -87,10 +87,8 @@ func runClusterVersion(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Print informational line before querying the server.
-	infoMsg := fmt.Sprintf("Using kubeconfig: %s (context: %s)", displayKubeconfig(kubeconfig), effectiveContext)
-	slog.Info(infoMsg)
-	fmt.Fprintln(cmd.OutOrStdout(), infoMsg)
+	// Log informational line before querying the server.
+	slog.Info("querying cluster version", "kubeconfig", displayKubeconfig(kubeconfig), "context", effectiveContext)
 
 	ctx, cancel := context.WithTimeout(cmd.Context(), timeout)
 	defer cancel()

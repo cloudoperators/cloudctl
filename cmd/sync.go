@@ -114,10 +114,10 @@ Examples:
 
 func runSync(cmd *cobra.Command, args []string) error {
 	// Use viper as a source of configuration
-	greenhouseClusterKubeconfig = resolveKubeconfig(viper.GetString("greenhouse-cluster-kubeconfig"))
+	greenhouseClusterKubeconfig = resolveKubeconfig("greenhouse-cluster-kubeconfig", viper.GetString("greenhouse-cluster-kubeconfig"))
 	greenhouseClusterContext = viper.GetString("greenhouse-cluster-context")
 	greenhouseClusterNamespace = viper.GetString("greenhouse-cluster-namespace")
-	remoteClusterKubeconfig = resolveKubeconfig(viper.GetString("remote-cluster-kubeconfig"))
+	remoteClusterKubeconfig = resolveKubeconfig("remote-cluster-kubeconfig", viper.GetString("remote-cluster-kubeconfig"))
 	remoteClusterName = viper.GetString("remote-cluster-name")
 	prefix = viper.GetString("prefix")
 	mergeIdenticalUsers = viper.GetBool("merge-identical-users")
@@ -145,15 +145,17 @@ func runSync(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Print informational summary so the user knows which files/context/namespace are active.
+	// Log informational summary so the user knows which files/context/namespace are active.
 	ctxLabel := greenhouseClusterContext
 	if ctxLabel == "" {
 		ctxLabel = "(current context)"
 	}
-	infoMsg := fmt.Sprintf("Greenhouse: %s (context: %s, namespace: %s)  →  local: %s",
-		displayKubeconfig(greenhouseClusterKubeconfig), ctxLabel, greenhouseClusterNamespace, displayKubeconfig(remoteClusterKubeconfig))
-	slog.Info(infoMsg)
-	fmt.Fprintln(cmd.OutOrStdout(), infoMsg)
+	slog.Info("syncing kubeconfigs",
+		"greenhouse", displayKubeconfig(greenhouseClusterKubeconfig),
+		"context", ctxLabel,
+		"namespace", greenhouseClusterNamespace,
+		"local", displayKubeconfig(remoteClusterKubeconfig),
+	)
 
 	var (
 		centralConfig *rest.Config
@@ -252,6 +254,9 @@ func runSync(cmd *cobra.Command, args []string) error {
 		// Multi-file KUBECONFIG: write to the first path (kubectl convention).
 		if parts := strings.SplitN(os.Getenv("KUBECONFIG"), string(os.PathListSeparator), 2); len(parts) > 0 && parts[0] != "" {
 			writeTarget = parts[0]
+		}
+		if writeTarget == "" {
+			return fmt.Errorf("cannot determine write target: KUBECONFIG is set but contains no usable path")
 		}
 	}
 
