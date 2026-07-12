@@ -90,10 +90,38 @@ func init() {
 	rootCmd.AddCommand(updateCmd)
 }
 
+// resolveKubeconfig returns the kubeconfig path to use.
+// When the value equals the default (~/.kube/config) and the KUBECONFIG env var
+// is set, it returns "" so that client-go uses its standard multi-file loading rules.
+// An explicit non-default path is always returned as-is.
+func resolveKubeconfig(flagValue string) string {
+	if flagValue != clientcmd.RecommendedHomeFile {
+		return flagValue
+	}
+	if os.Getenv("KUBECONFIG") != "" {
+		return ""
+	}
+	return flagValue
+}
+
+// displayKubeconfig returns a human-readable label for the effective kubeconfig source.
+// When path is "" the KUBECONFIG env var is active; otherwise the explicit path is shown.
+func displayKubeconfig(path string) string {
+	if path == "" {
+		return "$KUBECONFIG (" + os.Getenv("KUBECONFIG") + ")"
+	}
+	return path
+}
+
 // configWithContext builds a rest.Config for the specified context name from the given kubeconfig path.
+// When kubeconfigPath is empty, client-go's default loading rules are used (reads KUBECONFIG env var
+// and falls back to ~/.kube/config).
 func configWithContext(contextName, kubeconfigPath string) (*rest.Config, error) {
-	loadingRules := &clientcmd.ClientConfigLoadingRules{
-		ExplicitPath: kubeconfigPath,
+	var loadingRules *clientcmd.ClientConfigLoadingRules
+	if kubeconfigPath != "" {
+		loadingRules = &clientcmd.ClientConfigLoadingRules{ExplicitPath: kubeconfigPath}
+	} else {
+		loadingRules = clientcmd.NewDefaultClientConfigLoadingRules()
 	}
 	overrides := &clientcmd.ConfigOverrides{
 		CurrentContext: contextName,

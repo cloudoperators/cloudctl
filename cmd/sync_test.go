@@ -14,6 +14,7 @@ import (
 	greenhousev1alpha1 "github.com/cloudoperators/greenhouse/api/v1alpha1"
 	. "github.com/onsi/gomega"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 
 	"github.com/cloudoperators/cloudctl/cmd/output"
@@ -984,4 +985,18 @@ func TestBuildAccessDiffs_NoChanges(t *testing.T) {
 	accesses := buildAccessDiffs(diff, cfg, cfg)
 
 	g.Expect(accesses).To(BeEmpty())
+}
+
+func TestSyncKubeconfigFlags_DefaultEqualsRecommendedHomeFile(t *testing.T) {
+	g := NewWithT(t)
+
+	// Verify flag defaults are clientcmd.RecommendedHomeFile so resolveKubeconfig
+	// can detect "user did not explicitly set a path" via value comparison.
+	fGreenhouse := syncCmd.Flags().Lookup("greenhouse-cluster-kubeconfig")
+	g.Expect(fGreenhouse).ToNot(BeNil())
+	g.Expect(fGreenhouse.DefValue).To(Equal(clientcmd.RecommendedHomeFile))
+
+	fRemote := syncCmd.Flags().Lookup("remote-cluster-kubeconfig")
+	g.Expect(fRemote).ToNot(BeNil())
+	g.Expect(fRemote.DefValue).To(Equal(clientcmd.RecommendedHomeFile))
 }

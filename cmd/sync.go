@@ -114,10 +114,10 @@ Examples:
 
 func runSync(cmd *cobra.Command, args []string) error {
 	// Use viper as a source of configuration
-	greenhouseClusterKubeconfig = viper.GetString("greenhouse-cluster-kubeconfig")
+	greenhouseClusterKubeconfig = resolveKubeconfig(viper.GetString("greenhouse-cluster-kubeconfig"))
 	greenhouseClusterContext = viper.GetString("greenhouse-cluster-context")
 	greenhouseClusterNamespace = viper.GetString("greenhouse-cluster-namespace")
-	remoteClusterKubeconfig = viper.GetString("remote-cluster-kubeconfig")
+	remoteClusterKubeconfig = resolveKubeconfig(viper.GetString("remote-cluster-kubeconfig"))
 	remoteClusterName = viper.GetString("remote-cluster-name")
 	prefix = viper.GetString("prefix")
 	mergeIdenticalUsers = viper.GetBool("merge-identical-users")
@@ -134,31 +134,33 @@ func runSync(cmd *cobra.Command, args []string) error {
 	w := cmd.OutOrStdout()
 	printer := output.New(format, output.IsTTYWriter(w), w)
 
-	if greenhouseClusterKubeconfig == "" {
-		return fmt.Errorf("greenhouse cluster kubeconfig path is empty")
-	}
-
-	if _, err := os.Stat(greenhouseClusterKubeconfig); err != nil {
-		return fmt.Errorf("greenhouse cluster kubeconfig file not found at %q: %w", greenhouseClusterKubeconfig, err)
+	// When path is not empty (explicit file), verify it exists before proceeding.
+	if greenhouseClusterKubeconfig != "" {
+		if _, err := os.Stat(greenhouseClusterKubeconfig); err != nil {
+			return fmt.Errorf("greenhouse cluster kubeconfig file not found at %q: %w", greenhouseClusterKubeconfig, err)
+		}
 	}
 
 	if err := validateAuthType(authType, kubeloginPath); err != nil {
 		return err
 	}
 
+	// Print informational summary so the user knows which files/context/namespace are active.
+	ctxLabel := greenhouseClusterContext
+	if ctxLabel == "" {
+		ctxLabel = "(current context)"
+	}
+	infoMsg := fmt.Sprintf("Greenhouse: %s (context: %s, namespace: %s)  →  local: %s",
+		displayKubeconfig(greenhouseClusterKubeconfig), ctxLabel, greenhouseClusterNamespace, displayKubeconfig(remoteClusterKubeconfig))
+	slog.Info(infoMsg)
+	fmt.Fprintln(cmd.OutOrStdout(), infoMsg)
+
 	var (
 		centralConfig *rest.Config
 	)
-	if greenhouseClusterContext != "" {
-		centralConfig, err = configWithContext(greenhouseClusterContext, greenhouseClusterKubeconfig)
-		if err != nil {
-			return fmt.Errorf("failed to build greenhouse kubeconfig with context %q from %q: %w", greenhouseClusterContext, greenhouseClusterKubeconfig, err)
-		}
-	} else {
-		centralConfig, err = clientcmd.BuildConfigFromFlags("", greenhouseClusterKubeconfig)
-		if err != nil {
-			return fmt.Errorf("failed to build greenhouse kubeconfig from %q: %w", greenhouseClusterKubeconfig, err)
-		}
+	centralConfig, err = configWithContext(greenhouseClusterContext, greenhouseClusterKubeconfig)
+	if err != nil {
+		return fmt.Errorf("failed to build greenhouse kubeconfig: %w", err)
 	}
 
 	// Create a scheme and register Greenhouse types.
@@ -203,7 +205,12 @@ func runSync(cmd *cobra.Command, args []string) error {
 		return printer.Print(buildSyncResult(nil, notReady))
 	}
 
-	localConfig, err := clientcmd.LoadFromFile(remoteClusterKubeconfig)
+	var localConfig *clientcmdapi.Config
+	if remoteClusterKubeconfig != "" {
+		localConfig, err = clientcmd.LoadFromFile(remoteClusterKubeconfig)
+	} else {
+		localConfig, err = clientcmd.NewDefaultClientConfigLoadingRules().Load()
+	}
 	if err != nil {
 		return fmt.Errorf("failed to load local kubeconfig: %w", err)
 	}
@@ -240,7 +247,15 @@ func runSync(cmd *cobra.Command, args []string) error {
 		return printer.Print(buildDryRunResult(diff, localConfigBefore, localConfig))
 	}
 
-	if writeErr := writeConfig(localConfig, remoteClusterKubeconfig); writeErr != nil {
+	writeTarget := remoteClusterKubeconfig
+	if writeTarget == "" {
+		// Multi-file KUBECONFIG: write to the first path (kubectl convention).
+		if parts := strings.SplitN(os.Getenv("KUBECONFIG"), string(os.PathListSeparator), 2); len(parts) > 0 && parts[0] != "" {
+			writeTarget = parts[0]
+		}
+	}
+
+	if writeErr := writeConfig(localConfig, writeTarget); writeErr != nil {
 		_ = printer.Print(buildFailedSyncResult(ready, notReady, writeErr))
 		return fmt.Errorf("failed to write merged kubeconfig: %w", writeErr)
 	}

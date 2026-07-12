@@ -9,6 +9,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -55,7 +56,7 @@ var (
 )
 
 func runClusterVersion(cmd *cobra.Command, args []string) error {
-	kubeconfig = viper.GetString("kubeconfig")
+	kubeconfig = resolveKubeconfig(viper.GetString("kubeconfig"))
 	kubecontext = viper.GetString("context")
 
 	timeoutStr := viper.GetString("timeout")
@@ -74,12 +75,22 @@ func runClusterVersion(cmd *cobra.Command, args []string) error {
 	// current-context field from the kubeconfig.
 	effectiveContext := kubecontext
 	if effectiveContext == "" {
-		loadingRules := clientcmd.ClientConfigLoadingRules{ExplicitPath: kubeconfig}
+		var loadingRules *clientcmd.ClientConfigLoadingRules
+		if kubeconfig != "" {
+			loadingRules = &clientcmd.ClientConfigLoadingRules{ExplicitPath: kubeconfig}
+		} else {
+			loadingRules = clientcmd.NewDefaultClientConfigLoadingRules()
+		}
 		raw, rawErr := loadingRules.Load()
 		if rawErr == nil && raw != nil {
 			effectiveContext = raw.CurrentContext
 		}
 	}
+
+	// Print informational line before querying the server.
+	infoMsg := fmt.Sprintf("Using kubeconfig: %s (context: %s)", displayKubeconfig(kubeconfig), effectiveContext)
+	slog.Info(infoMsg)
+	fmt.Fprintln(cmd.OutOrStdout(), infoMsg)
 
 	ctx, cancel := context.WithTimeout(cmd.Context(), timeout)
 	defer cancel()

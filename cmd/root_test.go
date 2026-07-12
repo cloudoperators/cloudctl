@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/spf13/viper"
+	"k8s.io/client-go/tools/clientcmd"
 
 	. "github.com/onsi/gomega"
 )
@@ -87,4 +88,34 @@ func TestMissingConfigurationFile(t *testing.T) {
 	// Do the setup
 	err := setupConfig()
 	g.Expect(err).NotTo(BeNil())
+}
+
+func TestResolveKubeconfig_ExplicitNonDefault(t *testing.T) {
+	g := NewWithT(t)
+
+	t.Setenv("KUBECONFIG", "/some/other/config")
+
+	// An explicit non-default path must be returned unchanged regardless of KUBECONFIG.
+	result := resolveKubeconfig("/my/explicit/path")
+	g.Expect(result).To(Equal("/my/explicit/path"))
+}
+
+func TestResolveKubeconfig_DefaultWithKUBECONFIGSet(t *testing.T) {
+	g := NewWithT(t)
+
+	t.Setenv("KUBECONFIG", "/env/kubeconfig")
+
+	// When the value is the default and KUBECONFIG is set, return "" to let client-go handle it.
+	result := resolveKubeconfig(clientcmd.RecommendedHomeFile)
+	g.Expect(result).To(BeEmpty())
+}
+
+func TestResolveKubeconfig_DefaultWithoutKUBECONFIG(t *testing.T) {
+	g := NewWithT(t)
+
+	t.Setenv("KUBECONFIG", "")
+
+	// When KUBECONFIG is not set, return the default path as-is.
+	result := resolveKubeconfig(clientcmd.RecommendedHomeFile)
+	g.Expect(result).To(Equal(clientcmd.RecommendedHomeFile))
 }

@@ -8,6 +8,7 @@
 
 - **Syncs kubeconfigs** — fetches `ClusterKubeconfig` resources from Greenhouse and merges them into your local `~/.kube/config`, handling OIDC token caching, deduplication, and prefix-based entry management
 - **Reports cluster versions** — queries the Kubernetes API version of any context, trying unauthenticated first for speed
+- **Self-updates** — checks for and installs the latest cloudctl release from GitHub
 - **Structured output** — every command supports `--output text|json|yaml` for scripting and pipelines; interactive terminals get a spinner and a colour-coded table
 
 ## Installation
@@ -44,6 +45,9 @@ cloudctl cluster-version --context <context>
 # Print version info
 cloudctl version
 cloudctl version --output json   # machine-readable
+
+# Update cloudctl to the latest release
+cloudctl update
 ```
 
 ## Output formats
@@ -109,16 +113,18 @@ log-level: info
 
 ### `sync`
 
-Fetches `ClusterKubeconfig` resources from Greenhouse and merges them into your local kubeconfig.
+Fetches `ClusterKubeconfig` resources from Greenhouse and merges them into your local kubeconfig. Before connecting, it prints a summary line showing which kubeconfig files, context, and namespace are in use.
+
+The `--greenhouse-cluster-kubeconfig` and `--remote-cluster-kubeconfig` flags support the standard `KUBECONFIG` environment variable: when no explicit path is given, cloudctl defers to `KUBECONFIG` (multi-file merge, same as `kubectl`).
 
 ```
 cloudctl sync -n <org> [flags]
 
 Flags:
-  -k, --greenhouse-cluster-kubeconfig   Path to Greenhouse cluster kubeconfig (default: ~/.kube/config)
+  -k, --greenhouse-cluster-kubeconfig   Path to Greenhouse cluster kubeconfig (default: $KUBECONFIG or ~/.kube/config)
   -c, --greenhouse-cluster-context      Context inside the Greenhouse kubeconfig
   -n, --greenhouse-cluster-namespace    Greenhouse organization namespace (required)
-  -r, --remote-cluster-kubeconfig       Local kubeconfig to merge into (default: ~/.kube/config)
+  -r, --remote-cluster-kubeconfig       Local kubeconfig to merge into (default: $KUBECONFIG or ~/.kube/config)
       --remote-cluster-name             Sync only this cluster (default: all ready clusters)
       --prefix                          Prefix for managed kubeconfig entries (default: cloudctl)
       --merge-identical-users           Share a single auth entry for clusters with identical OIDC config (default: true)
@@ -126,17 +132,20 @@ Flags:
       --kubelogin-path                  Path to kubelogin binary (default: kubelogin)
       --kubelogin-extra-args            Extra flags passed to kubelogin
       --kubelogin-token-cache-dir       OIDC token cache directory
+      --dry-run                         Preview changes without writing to the kubeconfig file
 ```
 
 ### `cluster-version`
 
-Queries the Kubernetes server version for a given kubeconfig context. Tries an unauthenticated request first; falls back to an authenticated one if needed.
+Queries the Kubernetes server version for a given kubeconfig context. Tries an unauthenticated request first; falls back to an authenticated one if needed. Prints a summary line showing the kubeconfig source and context before querying.
+
+Respects the `KUBECONFIG` environment variable when no explicit `--kubeconfig` path is given.
 
 ```
 cloudctl cluster-version [flags]
 
 Flags:
-  -k, --kubeconfig   Path to kubeconfig file (default: ~/.kube/config)
+  -k, --kubeconfig   Path to kubeconfig file (default: $KUBECONFIG or ~/.kube/config)
   -c, --context      Context to query
       --timeout      Maximum time to wait for the API server (default: 10s)
 ```
@@ -150,6 +159,17 @@ cloudctl version [flags]
 
 Flags:
       --short   Print only the version number
+```
+
+### `update`
+
+Checks for the latest cloudctl release on GitHub and installs it, replacing the current binary.
+
+```
+cloudctl update [flags]
+
+Flags:
+      --dry-run   Check for a newer version without installing it
 ```
 
 ## Support, Feedback, Contributing
