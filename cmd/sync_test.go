@@ -990,8 +990,9 @@ func TestBuildAccessDiffs_NoChanges(t *testing.T) {
 func TestSyncKubeconfigFlags_DefaultEqualsRecommendedHomeFile(t *testing.T) {
 	g := NewWithT(t)
 
-	// Verify flag defaults are clientcmd.RecommendedHomeFile so resolveKubeconfig
-	// can detect "user did not explicitly set a path" via value comparison.
+	// Verify flag defaults are clientcmd.RecommendedHomeFile so that resolveKubeconfig
+	// can detect "user did not explicitly set a path" via viper.IsSet — when a flag is
+	// not set, viper returns the default, and IsSet returns false.
 	fGreenhouse := syncCmd.Flags().Lookup("greenhouse-cluster-kubeconfig")
 	g.Expect(fGreenhouse).ToNot(BeNil())
 	g.Expect(fGreenhouse.DefValue).To(Equal(clientcmd.RecommendedHomeFile))

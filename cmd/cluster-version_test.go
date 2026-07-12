@@ -133,8 +133,9 @@ func TestGetAuthenticatedVersion_NonOKStatus(t *testing.T) {
 func TestClusterVersionKubeconfigFlag_DefaultEqualsRecommendedHomeFile(t *testing.T) {
 	g := NewWithT(t)
 
-	// Verify that the --kubeconfig flag default equals clientcmd.RecommendedHomeFile
-	// so that resolveKubeconfig can detect "user did not explicitly set a path".
+	// Verify that the --kubeconfig flag default equals clientcmd.RecommendedHomeFile.
+	// resolveKubeconfig detects "user did not explicitly set a path" via viper.IsSet:
+	// when the flag is unset, viper returns the default and IsSet returns false.
 	f := clusterVersionCmd.Flags().Lookup("kubeconfig")
 	g.Expect(f).ToNot(BeNil())
 	g.Expect(f.DefValue).To(Equal(clientcmd.RecommendedHomeFile))

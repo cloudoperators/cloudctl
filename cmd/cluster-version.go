@@ -86,6 +86,9 @@ func runClusterVersion(cmd *cobra.Command, args []string) error {
 			effectiveContext = raw.CurrentContext
 		}
 	}
+	if effectiveContext == "" {
+		effectiveContext = "(unknown)"
+	}
 
 	// Log informational line before querying the server.
 	slog.Info("querying cluster version", "kubeconfig", displayKubeconfig(kubeconfig), "context", effectiveContext)

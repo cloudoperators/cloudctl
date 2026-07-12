@@ -107,9 +107,13 @@ func resolveKubeconfig(viperKey, flagValue string) string {
 
 // displayKubeconfig returns a human-readable label for the effective kubeconfig source.
 // When path is "" the KUBECONFIG env var is active; otherwise the explicit path is shown.
+// If path is "" and KUBECONFIG is also unset, client-go's default (~/.kube/config) is used.
 func displayKubeconfig(path string) string {
 	if path == "" {
-		return "$KUBECONFIG (" + os.Getenv("KUBECONFIG") + ")"
+		if kc := os.Getenv("KUBECONFIG"); kc != "" {
+			return "$KUBECONFIG (" + kc + ")"
+		}
+		return clientcmd.RecommendedHomeFile
 	}
 	return path
 }
