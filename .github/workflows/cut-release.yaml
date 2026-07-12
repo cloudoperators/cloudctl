@@ -17,6 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: write
     concurrency:
       group: release-${{ github.repository }}
       cancel-in-progress: false
