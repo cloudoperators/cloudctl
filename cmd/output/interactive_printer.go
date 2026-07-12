@@ -104,6 +104,27 @@ func (p *interactivePrinter) Print(v any) error {
 		w("  git commit: %s\n", t.GitCommit)
 		w("  build date: %s\n", t.BuildDate)
 		w("  go:         %s %s %s\n", t.GoVersion, t.Compiler, t.Platform)
+	case UpdateResult:
+		switch t.Status {
+		case UpdateStatusUpToDate:
+			w("%s\n", styleGreen.Render("cloudctl is up to date ("+t.CurrentVersion+")."))
+		case UpdateStatusAvailable:
+			w("%s %s %s\n",
+				styleYellow.Render("A new version is available:"),
+				styleBold.Render(t.LatestVersion),
+				styleFaint.Render("(current: "+t.CurrentVersion+")"),
+			)
+			w("Run %s to install it.\n", styleBold.Render("cloudctl update"))
+		case UpdateStatusUpdated:
+			w("%s %s %s %s\n",
+				styleGreen.Render("cloudctl updated:"),
+				t.CurrentVersion,
+				styleGreen.Render("->"),
+				styleBold.Render(t.LatestVersion),
+			)
+		default:
+			w("cloudctl update status: %s (current: %s, latest: %s)\n", t.Status, t.CurrentVersion, t.LatestVersion)
+		}
 	default:
 		w("%v\n", v)
 	}
