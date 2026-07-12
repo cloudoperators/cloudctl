@@ -287,7 +287,7 @@ func downloadAndExtractFrom(ctx context.Context, client *http.Client, url string
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("downloading archive: HTTP %d", resp.StatusCode)
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 
 	const maxArchiveSize = 256 << 20 // 256 MiB
