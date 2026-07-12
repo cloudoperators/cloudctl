@@ -113,7 +113,7 @@ log-level: info
 
 ### `sync`
 
-Fetches `ClusterKubeconfig` resources from Greenhouse and merges them into your local kubeconfig. Before connecting, it prints a summary line showing which kubeconfig files, context, and namespace are in use.
+Fetches `ClusterKubeconfig` resources from Greenhouse and merges them into your local kubeconfig. Before connecting, it logs a summary to stderr showing which kubeconfig files, context, and namespace are in use.
 
 The `--greenhouse-cluster-kubeconfig` and `--remote-cluster-kubeconfig` flags support the standard `KUBECONFIG` environment variable: when no explicit path is given, cloudctl defers to `KUBECONFIG` (multi-file merge, same as `kubectl`).
 
@@ -137,7 +137,7 @@ Flags:
 
 ### `cluster-version`
 
-Queries the Kubernetes server version for a given kubeconfig context. Tries an unauthenticated request first; falls back to an authenticated one if needed. Prints a summary line showing the kubeconfig source and context before querying.
+Queries the Kubernetes server version for a given kubeconfig context. Tries an unauthenticated request first; falls back to an authenticated one if needed. Logs a summary to stderr showing the kubeconfig source and context before querying.
 
 Respects the `KUBECONFIG` environment variable when no explicit `--kubeconfig` path is given.
 

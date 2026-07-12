@@ -118,6 +118,15 @@ func runSync(cmd *cobra.Command, args []string) error {
 	greenhouseClusterContext = viper.GetString("greenhouse-cluster-context")
 	greenhouseClusterNamespace = viper.GetString("greenhouse-cluster-namespace")
 	remoteClusterKubeconfig = resolveKubeconfig("remote-cluster-kubeconfig", viper.GetString("remote-cluster-kubeconfig"))
+
+	// Reject an explicit empty-string value — it would silently fall through to
+	// client-go default loading rules instead of failing fast.
+	if viper.IsSet("greenhouse-cluster-kubeconfig") && greenhouseClusterKubeconfig == "" {
+		return fmt.Errorf("--greenhouse-cluster-kubeconfig must not be empty")
+	}
+	if viper.IsSet("remote-cluster-kubeconfig") && remoteClusterKubeconfig == "" {
+		return fmt.Errorf("--remote-cluster-kubeconfig must not be empty")
+	}
 	remoteClusterName = viper.GetString("remote-cluster-name")
 	prefix = viper.GetString("prefix")
 	mergeIdenticalUsers = viper.GetBool("merge-identical-users")

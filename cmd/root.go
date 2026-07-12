@@ -92,8 +92,8 @@ func init() {
 
 // resolveKubeconfig returns the kubeconfig path to use.
 // viperKey is the viper key for the flag (e.g. "kubeconfig", "greenhouse-cluster-kubeconfig").
-// When the key was not explicitly set by the user (via flag or CLOUDCTL_* env var) and the
-// standard KUBECONFIG env var is set, it returns "" so that client-go uses its standard
+// When the key was not explicitly set by the user (via flag, CLOUDCTL_* env var, or config file)
+// and the standard KUBECONFIG env var is set, it returns "" so that client-go uses its standard
 // multi-file loading rules. An explicitly provided value is always returned as-is.
 func resolveKubeconfig(viperKey, flagValue string) string {
 	if viper.IsSet(viperKey) {

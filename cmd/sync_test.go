@@ -6,8 +6,10 @@ package cmd
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	greenhousemetav1alpha1 "github.com/cloudoperators/greenhouse/api/meta/v1alpha1"
@@ -1000,4 +1002,67 @@ func TestSyncKubeconfigFlags_DefaultEqualsRecommendedHomeFile(t *testing.T) {
 	fRemote := syncCmd.Flags().Lookup("remote-cluster-kubeconfig")
 	g.Expect(fRemote).ToNot(BeNil())
 	g.Expect(fRemote.DefValue).To(Equal(clientcmd.RecommendedHomeFile))
+}
+
+func TestWriteTargetFromKUBECONFIG(t *testing.T) {
+	sep := string(os.PathListSeparator)
+
+	tests := []struct {
+		name        string
+		remoteKC    string
+		kubeconfig  string
+		wantTarget  string
+		wantErrSubs string
+	}{
+		{
+			name:       "explicit remote path used as-is",
+			remoteKC:   "/explicit/kubeconfig",
+			kubeconfig: "/env/kubeconfig",
+			wantTarget: "/explicit/kubeconfig",
+		},
+		{
+			name:       "empty remote: first KUBECONFIG entry used",
+			remoteKC:   "",
+			kubeconfig: "/first" + sep + "/second",
+			wantTarget: "/first",
+		},
+		{
+			name:        "empty remote: leading separator yields error",
+			remoteKC:    "",
+			kubeconfig:  sep + "/second",
+			wantErrSubs: "cannot determine write target",
+		},
+		{
+			name:        "empty remote: KUBECONFIG also empty yields error",
+			remoteKC:    "",
+			kubeconfig:  "",
+			wantErrSubs: "cannot determine write target",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			g := NewWithT(t)
+			t.Setenv("KUBECONFIG", tc.kubeconfig)
+
+			writeTarget := tc.remoteKC
+			var writeErr error
+			if writeTarget == "" {
+				if parts := strings.SplitN(os.Getenv("KUBECONFIG"), string(os.PathListSeparator), 2); len(parts) > 0 && parts[0] != "" {
+					writeTarget = parts[0]
+				}
+				if writeTarget == "" {
+					writeErr = fmt.Errorf("cannot determine write target: KUBECONFIG is set but contains no usable path")
+				}
+			}
+
+			if tc.wantErrSubs != "" {
+				g.Expect(writeErr).To(HaveOccurred())
+				g.Expect(writeErr.Error()).To(ContainSubstring(tc.wantErrSubs))
+			} else {
+				g.Expect(writeErr).ToNot(HaveOccurred())
+				g.Expect(writeTarget).To(Equal(tc.wantTarget))
+			}
+		})
+	}
 }

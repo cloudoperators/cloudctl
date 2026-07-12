@@ -59,6 +59,11 @@ func runClusterVersion(cmd *cobra.Command, args []string) error {
 	kubeconfig = resolveKubeconfig("kubeconfig", viper.GetString("kubeconfig"))
 	kubecontext = viper.GetString("context")
 
+	// Reject an explicit empty-string value.
+	if viper.IsSet("kubeconfig") && kubeconfig == "" {
+		return fmt.Errorf("--kubeconfig must not be empty")
+	}
+
 	timeoutStr := viper.GetString("timeout")
 	timeout, err := time.ParseDuration(timeoutStr)
 	if err != nil {
@@ -67,7 +72,7 @@ func runClusterVersion(cmd *cobra.Command, args []string) error {
 
 	cfg, err := configWithContext(kubecontext, kubeconfig)
 	if err != nil {
-		return fmt.Errorf("failed to build kubeconfig with context %q: %w", kubecontext, err)
+		return fmt.Errorf("failed to build kubeconfig (source: %s, context: %q): %w", displayKubeconfig(kubeconfig), kubecontext, err)
 	}
 
 	// Resolve the actual context name used so the output is never empty.
