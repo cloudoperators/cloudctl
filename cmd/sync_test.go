@@ -6,10 +6,8 @@ package cmd
 import (
 	"bytes"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	greenhousemetav1alpha1 "github.com/cloudoperators/greenhouse/api/meta/v1alpha1"
@@ -1045,16 +1043,7 @@ func TestWriteTargetFromKUBECONFIG(t *testing.T) {
 			g := NewWithT(t)
 			t.Setenv("KUBECONFIG", tc.kubeconfig)
 
-			writeTarget := tc.remoteKC
-			var writeErr error
-			if writeTarget == "" {
-				if parts := strings.SplitN(os.Getenv("KUBECONFIG"), string(os.PathListSeparator), 2); len(parts) > 0 && parts[0] != "" {
-					writeTarget = parts[0]
-				}
-				if writeTarget == "" {
-					writeErr = fmt.Errorf("cannot determine write target: KUBECONFIG is set but contains no usable path")
-				}
-			}
+			writeTarget, writeErr := resolveWriteTarget(tc.remoteKC)
 
 			if tc.wantErrSubs != "" {
 				g.Expect(writeErr).To(HaveOccurred())

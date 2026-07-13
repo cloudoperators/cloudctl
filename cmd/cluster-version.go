@@ -72,7 +72,11 @@ func runClusterVersion(cmd *cobra.Command, args []string) error {
 
 	cfg, err := configWithContext(kubecontext, kubeconfig)
 	if err != nil {
-		return fmt.Errorf("failed to build kubeconfig (source: %s, context: %q): %w", displayKubeconfig(kubeconfig), kubecontext, err)
+		ctxDisplay := kubecontext
+		if ctxDisplay == "" {
+			ctxDisplay = "(current context)"
+		}
+		return fmt.Errorf("failed to build kubeconfig (source: %s, context: %s): %w", displayKubeconfig(kubeconfig), ctxDisplay, err)
 	}
 
 	// Resolve the actual context name used so the output is never empty.

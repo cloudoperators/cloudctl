@@ -258,15 +258,9 @@ func runSync(cmd *cobra.Command, args []string) error {
 		return printer.Print(buildDryRunResult(diff, localConfigBefore, localConfig))
 	}
 
-	writeTarget := remoteClusterKubeconfig
-	if writeTarget == "" {
-		// Multi-file KUBECONFIG: write to the first path (kubectl convention).
-		if parts := strings.SplitN(os.Getenv("KUBECONFIG"), string(os.PathListSeparator), 2); len(parts) > 0 && parts[0] != "" {
-			writeTarget = parts[0]
-		}
-		if writeTarget == "" {
-			return fmt.Errorf("cannot determine write target: KUBECONFIG is set but contains no usable path")
-		}
+	writeTarget, writeTargetErr := resolveWriteTarget(remoteClusterKubeconfig)
+	if writeTargetErr != nil {
+		return writeTargetErr
 	}
 
 	if writeErr := writeConfig(localConfig, writeTarget); writeErr != nil {
@@ -801,4 +795,18 @@ func validateAuthType(authType, kubeloginPath string) error {
 	default:
 		return fmt.Errorf("invalid --auth-type %q: must be one of \"auth-provider\" or \"exec-plugin\"", authType)
 	}
+}
+
+// resolveWriteTarget returns the kubeconfig file path to write merged config into.
+// When remoteKubeconfig is non-empty it is used directly. Otherwise the first
+// path from the KUBECONFIG env var is used (kubectl convention for multi-file merge).
+// An error is returned when no usable path can be determined.
+func resolveWriteTarget(remoteKubeconfig string) (string, error) {
+	if remoteKubeconfig != "" {
+		return remoteKubeconfig, nil
+	}
+	if parts := strings.SplitN(os.Getenv("KUBECONFIG"), string(os.PathListSeparator), 2); len(parts) > 0 && parts[0] != "" {
+		return parts[0], nil
+	}
+	return "", fmt.Errorf("cannot determine write target: KUBECONFIG is set but contains no usable path")
 }

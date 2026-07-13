@@ -169,7 +169,7 @@ Checks for the latest cloudctl release on GitHub and installs it, replacing the 
 cloudctl update [flags]
 
 Flags:
-      --dry-run   Check for a newer version without installing it
+      --check   Check for a newer version without installing it
 ```
 
 ## Support, Feedback, Contributing
