@@ -805,8 +805,12 @@ func resolveWriteTarget(remoteKubeconfig string) (string, error) {
 	if remoteKubeconfig != "" {
 		return remoteKubeconfig, nil
 	}
-	if parts := strings.SplitN(os.Getenv("KUBECONFIG"), string(os.PathListSeparator), 2); len(parts) > 0 && parts[0] != "" {
+	kc := os.Getenv("KUBECONFIG")
+	if kc == "" {
+		return "", fmt.Errorf("cannot determine write target: --remote-cluster-kubeconfig is not set and KUBECONFIG is empty")
+	}
+	if parts := strings.SplitN(kc, string(os.PathListSeparator), 2); len(parts) > 0 && parts[0] != "" {
 		return parts[0], nil
 	}
-	return "", fmt.Errorf("cannot determine write target: KUBECONFIG is set but contains no usable path")
+	return "", fmt.Errorf("cannot determine write target: KUBECONFIG=%q contains no usable first path", kc)
 }

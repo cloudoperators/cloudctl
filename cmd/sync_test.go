@@ -1028,13 +1028,13 @@ func TestWriteTargetFromKUBECONFIG(t *testing.T) {
 			name:        "empty remote: leading separator yields error",
 			remoteKC:    "",
 			kubeconfig:  sep + "/second",
-			wantErrSubs: "cannot determine write target",
+			wantErrSubs: "contains no usable first path",
 		},
 		{
 			name:        "empty remote: KUBECONFIG also empty yields error",
 			remoteKC:    "",
 			kubeconfig:  "",
-			wantErrSubs: "cannot determine write target",
+			wantErrSubs: "KUBECONFIG is empty",
 		},
 	}
 
