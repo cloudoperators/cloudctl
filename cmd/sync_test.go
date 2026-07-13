@@ -14,6 +14,7 @@ import (
 	greenhousev1alpha1 "github.com/cloudoperators/greenhouse/api/v1alpha1"
 	. "github.com/onsi/gomega"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 
 	"github.com/cloudoperators/cloudctl/cmd/output"
@@ -984,4 +985,73 @@ func TestBuildAccessDiffs_NoChanges(t *testing.T) {
 	accesses := buildAccessDiffs(diff, cfg, cfg)
 
 	g.Expect(accesses).To(BeEmpty())
+}
+
+func TestSyncKubeconfigFlags_DefaultEqualsRecommendedHomeFile(t *testing.T) {
+	g := NewWithT(t)
+
+	// Verify flag defaults are clientcmd.RecommendedHomeFile so that resolveKubeconfig
+	// can detect "user did not explicitly set a path" via viper.IsSet — when a flag is
+	// not set, viper returns the default, and IsSet returns false.
+	fGreenhouse := syncCmd.Flags().Lookup("greenhouse-cluster-kubeconfig")
+	g.Expect(fGreenhouse).ToNot(BeNil())
+	g.Expect(fGreenhouse.DefValue).To(Equal(clientcmd.RecommendedHomeFile))
+
+	fRemote := syncCmd.Flags().Lookup("remote-cluster-kubeconfig")
+	g.Expect(fRemote).ToNot(BeNil())
+	g.Expect(fRemote.DefValue).To(Equal(clientcmd.RecommendedHomeFile))
+}
+
+func TestWriteTargetFromKUBECONFIG(t *testing.T) {
+	sep := string(os.PathListSeparator)
+
+	tests := []struct {
+		name        string
+		remoteKC    string
+		kubeconfig  string
+		wantTarget  string
+		wantErrSubs string
+	}{
+		{
+			name:       "explicit remote path used as-is",
+			remoteKC:   "/explicit/kubeconfig",
+			kubeconfig: "/env/kubeconfig",
+			wantTarget: "/explicit/kubeconfig",
+		},
+		{
+			name:       "empty remote: first KUBECONFIG entry used",
+			remoteKC:   "",
+			kubeconfig: "/first" + sep + "/second",
+			wantTarget: "/first",
+		},
+		{
+			name:        "empty remote: leading separator yields error",
+			remoteKC:    "",
+			kubeconfig:  sep + "/second",
+			wantErrSubs: "contains no usable first path",
+		},
+		{
+			name:        "empty remote: KUBECONFIG also empty yields error",
+			remoteKC:    "",
+			kubeconfig:  "",
+			wantErrSubs: "KUBECONFIG is empty",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			g := NewWithT(t)
+			t.Setenv("KUBECONFIG", tc.kubeconfig)
+
+			writeTarget, writeErr := resolveWriteTarget(tc.remoteKC)
+
+			if tc.wantErrSubs != "" {
+				g.Expect(writeErr).To(HaveOccurred())
+				g.Expect(writeErr.Error()).To(ContainSubstring(tc.wantErrSubs))
+			} else {
+				g.Expect(writeErr).ToNot(HaveOccurred())
+				g.Expect(writeTarget).To(Equal(tc.wantTarget))
+			}
+		})
+	}
 }

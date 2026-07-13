@@ -90,10 +90,43 @@ func init() {
 	rootCmd.AddCommand(updateCmd)
 }
 
+// resolveKubeconfig returns the kubeconfig path to use.
+// viperKey is the viper key for the flag (e.g. "kubeconfig", "greenhouse-cluster-kubeconfig").
+// When the key was not explicitly set by the user (via flag, CLOUDCTL_* env var, or config file)
+// and the standard KUBECONFIG env var is set, it returns "" so that client-go uses its standard
+// multi-file loading rules. An explicitly provided value is always returned as-is.
+func resolveKubeconfig(viperKey, flagValue string) string {
+	if viper.IsSet(viperKey) {
+		return flagValue
+	}
+	if os.Getenv("KUBECONFIG") != "" {
+		return ""
+	}
+	return flagValue
+}
+
+// displayKubeconfig returns a human-readable label for the effective kubeconfig source.
+// When path is "" the KUBECONFIG env var is active; otherwise the explicit path is shown.
+// If path is "" and KUBECONFIG is also unset, client-go's default (~/.kube/config) is used.
+func displayKubeconfig(path string) string {
+	if path == "" {
+		if kc := os.Getenv("KUBECONFIG"); kc != "" {
+			return "$KUBECONFIG (" + kc + ")"
+		}
+		return clientcmd.RecommendedHomeFile
+	}
+	return path
+}
+
 // configWithContext builds a rest.Config for the specified context name from the given kubeconfig path.
+// When kubeconfigPath is empty, client-go's default loading rules are used (reads KUBECONFIG env var
+// and falls back to ~/.kube/config).
 func configWithContext(contextName, kubeconfigPath string) (*rest.Config, error) {
-	loadingRules := &clientcmd.ClientConfigLoadingRules{
-		ExplicitPath: kubeconfigPath,
+	var loadingRules *clientcmd.ClientConfigLoadingRules
+	if kubeconfigPath != "" {
+		loadingRules = &clientcmd.ClientConfigLoadingRules{ExplicitPath: kubeconfigPath}
+	} else {
+		loadingRules = clientcmd.NewDefaultClientConfigLoadingRules()
 	}
 	overrides := &clientcmd.ConfigOverrides{
 		CurrentContext: contextName,

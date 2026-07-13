@@ -9,6 +9,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -55,8 +56,13 @@ var (
 )
 
 func runClusterVersion(cmd *cobra.Command, args []string) error {
-	kubeconfig = viper.GetString("kubeconfig")
+	kubeconfig = resolveKubeconfig("kubeconfig", viper.GetString("kubeconfig"))
 	kubecontext = viper.GetString("context")
+
+	// Reject an explicit empty-string value.
+	if viper.IsSet("kubeconfig") && kubeconfig == "" {
+		return fmt.Errorf("--kubeconfig must not be empty")
+	}
 
 	timeoutStr := viper.GetString("timeout")
 	timeout, err := time.ParseDuration(timeoutStr)
@@ -66,7 +72,11 @@ func runClusterVersion(cmd *cobra.Command, args []string) error {
 
 	cfg, err := configWithContext(kubecontext, kubeconfig)
 	if err != nil {
-		return fmt.Errorf("failed to build kubeconfig with context %q: %w", kubecontext, err)
+		ctxDisplay := kubecontext
+		if ctxDisplay == "" {
+			ctxDisplay = "(current context)"
+		}
+		return fmt.Errorf("failed to build kubeconfig (source: %s, context: %s): %w", displayKubeconfig(kubeconfig), ctxDisplay, err)
 	}
 
 	// Resolve the actual context name used so the output is never empty.
@@ -74,12 +84,23 @@ func runClusterVersion(cmd *cobra.Command, args []string) error {
 	// current-context field from the kubeconfig.
 	effectiveContext := kubecontext
 	if effectiveContext == "" {
-		loadingRules := clientcmd.ClientConfigLoadingRules{ExplicitPath: kubeconfig}
+		var loadingRules *clientcmd.ClientConfigLoadingRules
+		if kubeconfig != "" {
+			loadingRules = &clientcmd.ClientConfigLoadingRules{ExplicitPath: kubeconfig}
+		} else {
+			loadingRules = clientcmd.NewDefaultClientConfigLoadingRules()
+		}
 		raw, rawErr := loadingRules.Load()
 		if rawErr == nil && raw != nil {
 			effectiveContext = raw.CurrentContext
 		}
 	}
+	if effectiveContext == "" {
+		effectiveContext = "(unknown)"
+	}
+
+	// Log informational line before querying the server.
+	slog.Info("querying cluster version", "kubeconfig", displayKubeconfig(kubeconfig), "context", effectiveContext)
 
 	ctx, cancel := context.WithTimeout(cmd.Context(), timeout)
 	defer cancel()

@@ -14,6 +14,7 @@ import (
 	. "github.com/onsi/gomega"
 	"k8s.io/apimachinery/pkg/version"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
 
@@ -127,4 +128,15 @@ func TestGetAuthenticatedVersion_NonOKStatus(t *testing.T) {
 	_, err := getAuthenticatedVersion(context.Background(), cfg)
 	g.Expect(err).To(HaveOccurred())
 	g.Expect(err.Error()).To(ContainSubstring("500"))
+}
+
+func TestClusterVersionKubeconfigFlag_DefaultEqualsRecommendedHomeFile(t *testing.T) {
+	g := NewWithT(t)
+
+	// Verify that the --kubeconfig flag default equals clientcmd.RecommendedHomeFile.
+	// resolveKubeconfig detects "user did not explicitly set a path" via viper.IsSet:
+	// when the flag is unset, viper returns the default and IsSet returns false.
+	f := clusterVersionCmd.Flags().Lookup("kubeconfig")
+	g.Expect(f).ToNot(BeNil())
+	g.Expect(f.DefValue).To(Equal(clientcmd.RecommendedHomeFile))
 }

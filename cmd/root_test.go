@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/spf13/viper"
+	"k8s.io/client-go/tools/clientcmd"
 
 	. "github.com/onsi/gomega"
 )
@@ -87,4 +88,67 @@ func TestMissingConfigurationFile(t *testing.T) {
 	// Do the setup
 	err := setupConfig()
 	g.Expect(err).NotTo(BeNil())
+}
+
+func TestResolveKubeconfig_ExplicitlySet(t *testing.T) {
+	g := NewWithT(t)
+
+	t.Setenv("KUBECONFIG", "/some/other/config")
+	t.Cleanup(func() { viper.Reset() })
+
+	// When the viper key is explicitly set (simulating flag/CLOUDCTL_* env var),
+	// the provided value must be returned as-is regardless of KUBECONFIG.
+	viper.Set("kubeconfig", "/my/explicit/path")
+	result := resolveKubeconfig("kubeconfig", "/my/explicit/path")
+	g.Expect(result).To(Equal("/my/explicit/path"))
+}
+
+func TestResolveKubeconfig_NotSetWithKUBECONFIG(t *testing.T) {
+	g := NewWithT(t)
+
+	t.Setenv("KUBECONFIG", "/env/kubeconfig")
+	t.Cleanup(func() { viper.Reset() })
+
+	// When the key was not explicitly set and KUBECONFIG is set, return "" to let client-go handle it.
+	result := resolveKubeconfig("kubeconfig", clientcmd.RecommendedHomeFile)
+	g.Expect(result).To(BeEmpty())
+}
+
+func TestResolveKubeconfig_NotSetWithoutKUBECONFIG(t *testing.T) {
+	g := NewWithT(t)
+
+	t.Setenv("KUBECONFIG", "")
+	t.Cleanup(func() { viper.Reset() })
+
+	// When KUBECONFIG is not set either, return the default path as-is.
+	result := resolveKubeconfig("kubeconfig", clientcmd.RecommendedHomeFile)
+	g.Expect(result).To(Equal(clientcmd.RecommendedHomeFile))
+}
+
+func TestResolveKubeconfig_ViperIsSetFalseForUnparsedCobraFlag(t *testing.T) {
+	g := NewWithT(t)
+
+	t.Setenv("KUBECONFIG", "/env/kubeconfig")
+	t.Cleanup(func() { viper.Reset() })
+
+	// Bind clusterVersionCmd's flags to a fresh viper instance and parse
+	// with no arguments so the --kubeconfig flag is left at its default.
+	// viper.IsSet must remain false, meaning resolveKubeconfig defers to
+	// KUBECONFIG (returns "").
+	//
+	// This guards against a regression where Cobra/pflag/viper semantics
+	// change such that binding a flag with a default causes IsSet to return
+	// true even when the user never touched the flag.
+	localViper := viper.New()
+	g.Expect(localViper.BindPFlags(clusterVersionCmd.Flags())).To(Succeed())
+	g.Expect(clusterVersionCmd.ParseFlags([]string{})).To(Succeed())
+
+	g.Expect(localViper.IsSet("kubeconfig")).To(BeFalse(),
+		"viper.IsSet must be false for a flag that was not explicitly set by the user")
+
+	// Confirm resolveKubeconfig returns "" (defer to KUBECONFIG) in this state.
+	// We use the global viper (which is what resolveKubeconfig reads) — it
+	// has not been set, so IsSet is also false there.
+	result := resolveKubeconfig("kubeconfig", clientcmd.RecommendedHomeFile)
+	g.Expect(result).To(BeEmpty())
 }

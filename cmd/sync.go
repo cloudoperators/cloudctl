@@ -114,10 +114,19 @@ Examples:
 
 func runSync(cmd *cobra.Command, args []string) error {
 	// Use viper as a source of configuration
-	greenhouseClusterKubeconfig = viper.GetString("greenhouse-cluster-kubeconfig")
+	greenhouseClusterKubeconfig = resolveKubeconfig("greenhouse-cluster-kubeconfig", viper.GetString("greenhouse-cluster-kubeconfig"))
 	greenhouseClusterContext = viper.GetString("greenhouse-cluster-context")
 	greenhouseClusterNamespace = viper.GetString("greenhouse-cluster-namespace")
-	remoteClusterKubeconfig = viper.GetString("remote-cluster-kubeconfig")
+	remoteClusterKubeconfig = resolveKubeconfig("remote-cluster-kubeconfig", viper.GetString("remote-cluster-kubeconfig"))
+
+	// Reject an explicit empty-string value — it would silently fall through to
+	// client-go default loading rules instead of failing fast.
+	if viper.IsSet("greenhouse-cluster-kubeconfig") && greenhouseClusterKubeconfig == "" {
+		return fmt.Errorf("--greenhouse-cluster-kubeconfig must not be empty")
+	}
+	if viper.IsSet("remote-cluster-kubeconfig") && remoteClusterKubeconfig == "" {
+		return fmt.Errorf("--remote-cluster-kubeconfig must not be empty")
+	}
 	remoteClusterName = viper.GetString("remote-cluster-name")
 	prefix = viper.GetString("prefix")
 	mergeIdenticalUsers = viper.GetBool("merge-identical-users")
@@ -134,31 +143,35 @@ func runSync(cmd *cobra.Command, args []string) error {
 	w := cmd.OutOrStdout()
 	printer := output.New(format, output.IsTTYWriter(w), w)
 
-	if greenhouseClusterKubeconfig == "" {
-		return fmt.Errorf("greenhouse cluster kubeconfig path is empty")
-	}
-
-	if _, err := os.Stat(greenhouseClusterKubeconfig); err != nil {
-		return fmt.Errorf("greenhouse cluster kubeconfig file not found at %q: %w", greenhouseClusterKubeconfig, err)
+	// When path is not empty (explicit file), verify it exists before proceeding.
+	if greenhouseClusterKubeconfig != "" {
+		if _, err := os.Stat(greenhouseClusterKubeconfig); err != nil {
+			return fmt.Errorf("greenhouse cluster kubeconfig file not found at %q: %w", greenhouseClusterKubeconfig, err)
+		}
 	}
 
 	if err := validateAuthType(authType, kubeloginPath); err != nil {
 		return err
 	}
 
+	// Log informational summary so the user knows which files/context/namespace are active.
+	ctxLabel := greenhouseClusterContext
+	if ctxLabel == "" {
+		ctxLabel = "(current context)"
+	}
+	slog.Info("syncing kubeconfigs",
+		"greenhouse", displayKubeconfig(greenhouseClusterKubeconfig),
+		"context", ctxLabel,
+		"namespace", greenhouseClusterNamespace,
+		"local", displayKubeconfig(remoteClusterKubeconfig),
+	)
+
 	var (
 		centralConfig *rest.Config
 	)
-	if greenhouseClusterContext != "" {
-		centralConfig, err = configWithContext(greenhouseClusterContext, greenhouseClusterKubeconfig)
-		if err != nil {
-			return fmt.Errorf("failed to build greenhouse kubeconfig with context %q from %q: %w", greenhouseClusterContext, greenhouseClusterKubeconfig, err)
-		}
-	} else {
-		centralConfig, err = clientcmd.BuildConfigFromFlags("", greenhouseClusterKubeconfig)
-		if err != nil {
-			return fmt.Errorf("failed to build greenhouse kubeconfig from %q: %w", greenhouseClusterKubeconfig, err)
-		}
+	centralConfig, err = configWithContext(greenhouseClusterContext, greenhouseClusterKubeconfig)
+	if err != nil {
+		return fmt.Errorf("failed to build greenhouse kubeconfig (source: %s, context: %s): %w", displayKubeconfig(greenhouseClusterKubeconfig), ctxLabel, err)
 	}
 
 	// Create a scheme and register Greenhouse types.
@@ -203,7 +216,12 @@ func runSync(cmd *cobra.Command, args []string) error {
 		return printer.Print(buildSyncResult(nil, notReady))
 	}
 
-	localConfig, err := clientcmd.LoadFromFile(remoteClusterKubeconfig)
+	var localConfig *clientcmdapi.Config
+	if remoteClusterKubeconfig != "" {
+		localConfig, err = clientcmd.LoadFromFile(remoteClusterKubeconfig)
+	} else {
+		localConfig, err = clientcmd.NewDefaultClientConfigLoadingRules().Load()
+	}
 	if err != nil {
 		return fmt.Errorf("failed to load local kubeconfig: %w", err)
 	}
@@ -240,7 +258,12 @@ func runSync(cmd *cobra.Command, args []string) error {
 		return printer.Print(buildDryRunResult(diff, localConfigBefore, localConfig))
 	}
 
-	if writeErr := writeConfig(localConfig, remoteClusterKubeconfig); writeErr != nil {
+	writeTarget, writeTargetErr := resolveWriteTarget(remoteClusterKubeconfig)
+	if writeTargetErr != nil {
+		return writeTargetErr
+	}
+
+	if writeErr := writeConfig(localConfig, writeTarget); writeErr != nil {
 		_ = printer.Print(buildFailedSyncResult(ready, notReady, writeErr))
 		return fmt.Errorf("failed to write merged kubeconfig: %w", writeErr)
 	}
@@ -772,4 +795,22 @@ func validateAuthType(authType, kubeloginPath string) error {
 	default:
 		return fmt.Errorf("invalid --auth-type %q: must be one of \"auth-provider\" or \"exec-plugin\"", authType)
 	}
+}
+
+// resolveWriteTarget returns the kubeconfig file path to write merged config into.
+// When remoteKubeconfig is non-empty it is used directly. Otherwise the first
+// path from the KUBECONFIG env var is used (kubectl convention for multi-file merge).
+// An error is returned when no usable path can be determined.
+func resolveWriteTarget(remoteKubeconfig string) (string, error) {
+	if remoteKubeconfig != "" {
+		return remoteKubeconfig, nil
+	}
+	kc := os.Getenv("KUBECONFIG")
+	if kc == "" {
+		return "", fmt.Errorf("cannot determine write target: --remote-cluster-kubeconfig is not set and KUBECONFIG is empty")
+	}
+	if parts := strings.SplitN(kc, string(os.PathListSeparator), 2); len(parts) > 0 && parts[0] != "" {
+		return parts[0], nil
+	}
+	return "", fmt.Errorf("cannot determine write target: KUBECONFIG=%q contains no usable first path", kc)
 }
