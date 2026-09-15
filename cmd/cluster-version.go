@@ -9,7 +9,6 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -99,9 +98,14 @@ func runClusterVersion(cmd *cobra.Command, args []string) error {
 		effectiveContext = "(unknown)"
 	}
 
-	// Log informational line before querying the server.
-	slog.Info("querying cluster version", "kubeconfig", displayKubeconfig(kubeconfig), "context", effectiveContext)
+	format, err := output.ParseFormat(viper.GetString("output"))
+	if err != nil {
+		return err
+	}
+	w := cmd.OutOrStdout()
+	printer := output.New(format, output.IsTTYWriter(w), w)
 
+	stopQuery := printer.StartSpinner("Querying cluster version...")
 	ctx, cancel := context.WithTimeout(cmd.Context(), timeout)
 	defer cancel()
 
@@ -110,14 +114,17 @@ func runClusterVersion(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		// 2) Fallback to authenticated
 		if !hasAuth(cfg) {
+			stopQuery()
 			return fmt.Errorf("no authentication methods found in your kubeconfig. Please authenticate (`kubelogin`, etc.) and try again")
 		}
 
 		ver, err = getAuthenticatedVersion(ctx, cfg)
 		if err != nil {
+			stopQuery()
 			return fmt.Errorf("authenticated version fetch failed: %w", err)
 		}
 	}
+	stopQuery()
 
 	// Strip build metadata so we get a clean semver string (e.g. "1.29.3").
 	parts := strings.Split(ver.GitVersion, "-")
@@ -126,12 +133,6 @@ func runClusterVersion(cmd *cobra.Command, args []string) error {
 	clean = parts[0]
 	clusterVersion := strings.TrimPrefix(clean, "v")
 
-	format, err := output.ParseFormat(viper.GetString("output"))
-	if err != nil {
-		return err
-	}
-	w := cmd.OutOrStdout()
-	printer := output.New(format, output.IsTTYWriter(w), w)
 	return printer.Print(output.ClusterVersionResult{Context: effectiveContext, Version: clusterVersion})
 }
 

@@ -154,17 +154,10 @@ func runSync(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Log informational summary so the user knows which files/context/namespace are active.
 	ctxLabel := greenhouseClusterContext
 	if ctxLabel == "" {
 		ctxLabel = "(current context)"
 	}
-	slog.Info("syncing kubeconfigs",
-		"greenhouse", displayKubeconfig(greenhouseClusterKubeconfig),
-		"context", ctxLabel,
-		"namespace", greenhouseClusterNamespace,
-		"local", displayKubeconfig(remoteClusterKubeconfig),
-	)
 
 	var (
 		centralConfig *rest.Config
