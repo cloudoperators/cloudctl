@@ -79,13 +79,16 @@ func runClusterVersion(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--kubeconfig must not be empty")
 	}
 
-	cvGreenhouseKubeconfig = resolveKubeconfig("greenhouse-cluster-kubeconfig", viper.GetString("greenhouse-cluster-kubeconfig"))
-	if viper.IsSet("greenhouse-cluster-kubeconfig") && cvGreenhouseKubeconfig == "" {
+	// Read Greenhouse flags directly from the cobra flag set to avoid Viper key
+	// collisions with the identically-named flags registered by sync.go.
+	cvGreenhouseKubeconfig, _ = cmd.Flags().GetString("greenhouse-cluster-kubeconfig")
+	cvGreenhouseKubeconfig = resolveKubeconfig("greenhouse-cluster-kubeconfig", cvGreenhouseKubeconfig)
+	if cmd.Flags().Changed("greenhouse-cluster-kubeconfig") && cvGreenhouseKubeconfig == "" {
 		return fmt.Errorf("--greenhouse-cluster-kubeconfig must not be empty")
 	}
-	cvGreenhouseContext = viper.GetString("greenhouse-cluster-context")
-	cvGreenhouseNamespace = viper.GetString("greenhouse-cluster-namespace")
-	cvGreenhouseClusterName = viper.GetString("greenhouse-cluster-name")
+	cvGreenhouseContext, _ = cmd.Flags().GetString("greenhouse-cluster-context")
+	cvGreenhouseNamespace, _ = cmd.Flags().GetString("greenhouse-cluster-namespace")
+	cvGreenhouseClusterName, _ = cmd.Flags().GetString("greenhouse-cluster-name")
 
 	timeoutStr := viper.GetString("timeout")
 	timeout, err := time.ParseDuration(timeoutStr)
@@ -136,8 +139,12 @@ func runClusterVersion(cmd *cobra.Command, args []string) error {
 	var clusterVersion string
 
 	// 1) Try reading version from the ClusterKubeconfig label on Greenhouse.
+	// Use half the total timeout so the live-query fallback always has a
+	// meaningful deadline even if the Greenhouse cluster is slow to respond.
 	if cvGreenhouseNamespace != "" && cvGreenhouseClusterName != "" {
-		labelVer, labelErr := getVersionFromLabel(ctx, cvGreenhouseKubeconfig, cvGreenhouseContext, cvGreenhouseNamespace, cvGreenhouseClusterName)
+		labelCtx, labelCancel := context.WithTimeout(cmd.Context(), timeout/2)
+		labelVer, labelErr := getVersionFromLabel(labelCtx, cvGreenhouseKubeconfig, cvGreenhouseContext, cvGreenhouseNamespace, cvGreenhouseClusterName)
+		labelCancel()
 		if labelErr != nil {
 			slog.Debug("label-based version lookup failed, falling back to live query", "error", labelErr)
 		} else if labelVer != "" {
@@ -205,10 +212,12 @@ func getVersionFromLabel(ctx context.Context, greenhouseKubeconfig, greenhouseCo
 
 // versionLabelFromClient fetches the greenhouse.sap/kubernetes-version label
 // using an already-constructed client. Separated for testability.
+// Returns ("", nil) only on not-found; other errors (RBAC, network, timeout)
+// are propagated so the caller can log them and fall back to a live query.
 func versionLabelFromClient(ctx context.Context, c client.Client, namespace, clusterName string) (string, error) {
 	var ckc v1alpha1.ClusterKubeconfig
 	if err := c.Get(ctx, client.ObjectKey{Namespace: namespace, Name: clusterName}, &ckc); err != nil {
-		return "", nil
+		return "", client.IgnoreNotFound(err)
 	}
 	return ckc.Labels["greenhouse.sap/kubernetes-version"], nil
 }
