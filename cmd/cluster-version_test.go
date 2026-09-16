@@ -245,9 +245,9 @@ func TestGetVersionFromLabel_BadKubeconfig(t *testing.T) {
 	// A kubeconfig with invalid YAML should cause getVersionFromLabel to return an error.
 	f, err := os.CreateTemp("", "bad-kube-*.yaml")
 	g.Expect(err).ToNot(HaveOccurred())
-	defer os.Remove(f.Name())
+	defer func() { _ = os.Remove(f.Name()) }()
 	_, _ = f.WriteString("invalid yaml: [")
-	f.Close()
+	g.Expect(f.Close()).To(Succeed())
 
 	ver, err := getVersionFromLabel(context.Background(), f.Name(), "", "my-org", "prod-eu")
 	g.Expect(err).To(HaveOccurred())
