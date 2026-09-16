@@ -156,6 +156,16 @@ func newGreenhouseFakeClient(objs ...v1alpha1.ClusterKubeconfig) *fake.ClientBui
 	return builder
 }
 
+func TestNormalizeVersion(t *testing.T) {
+	g := NewWithT(t)
+
+	g.Expect(normalizeVersion("v1.29.3")).To(Equal("1.29.3"))
+	g.Expect(normalizeVersion("1.29.3")).To(Equal("1.29.3"))
+	g.Expect(normalizeVersion("v1.31.4+k3s1")).To(Equal("1.31.4"))
+	g.Expect(normalizeVersion("v1.29.3-eks-1234567")).To(Equal("1.29.3"))
+	g.Expect(normalizeVersion("v1.31.4-k3s1")).To(Equal("1.31.4"))
+}
+
 func TestVersionLabelFromClient_LabelPresent(t *testing.T) {
 	g := NewWithT(t)
 
@@ -163,14 +173,17 @@ func TestVersionLabelFromClient_LabelPresent(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "prod-eu",
 			Namespace: "my-org",
-			Labels:    map[string]string{"greenhouse.sap/kubernetes-version": "1.29.3"},
+			// Greenhouse controller stores values like "v1.29.3" or "v1.31.4-k3s1".
+			Labels: map[string]string{"greenhouse.sap/kubernetes-version": "v1.29.3"},
 		},
 	}
 	c := newGreenhouseFakeClient(ckc).Build()
 
 	ver, err := versionLabelFromClient(context.Background(), c, "my-org", "prod-eu")
 	g.Expect(err).ToNot(HaveOccurred())
-	g.Expect(ver).To(Equal("1.29.3"))
+	// versionLabelFromClient returns the raw label; normalization is the caller's job.
+	g.Expect(ver).To(Equal("v1.29.3"))
+	g.Expect(normalizeVersion(ver)).To(Equal("1.29.3"))
 }
 
 func TestVersionLabelFromClient_LabelAbsent(t *testing.T) {

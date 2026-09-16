@@ -80,6 +80,9 @@ func runClusterVersion(cmd *cobra.Command, args []string) error {
 	}
 
 	cvGreenhouseKubeconfig = resolveKubeconfig("greenhouse-cluster-kubeconfig", viper.GetString("greenhouse-cluster-kubeconfig"))
+	if viper.IsSet("greenhouse-cluster-kubeconfig") && cvGreenhouseKubeconfig == "" {
+		return fmt.Errorf("--greenhouse-cluster-kubeconfig must not be empty")
+	}
 	cvGreenhouseContext = viper.GetString("greenhouse-cluster-context")
 	cvGreenhouseNamespace = viper.GetString("greenhouse-cluster-namespace")
 	cvGreenhouseClusterName = viper.GetString("greenhouse-cluster-name")
@@ -138,7 +141,7 @@ func runClusterVersion(cmd *cobra.Command, args []string) error {
 		if labelErr != nil {
 			slog.Debug("label-based version lookup failed, falling back to live query", "error", labelErr)
 		} else if labelVer != "" {
-			clusterVersion = labelVer
+			clusterVersion = normalizeVersion(labelVer)
 		}
 	}
 
@@ -161,15 +164,20 @@ func runClusterVersion(cmd *cobra.Command, args []string) error {
 		}
 
 		// Strip build metadata so we get a clean semver string (e.g. "1.29.3").
-		parts := strings.Split(ver.GitVersion, "-")
-		clean := parts[0]
-		parts = strings.Split(clean, "+")
-		clean = parts[0]
-		clusterVersion = strings.TrimPrefix(clean, "v")
+		clusterVersion = normalizeVersion(ver.GitVersion)
 	}
 
 	stopQuery()
 	return printer.Print(output.ClusterVersionResult{Context: effectiveContext, Version: clusterVersion})
+}
+
+// normalizeVersion strips a leading "v", prerelease suffix, and build metadata
+// from a Kubernetes version string, returning a clean semver (e.g. "1.29.3").
+func normalizeVersion(v string) string {
+	v = strings.TrimPrefix(v, "v")
+	v = strings.Split(v, "-")[0]
+	v = strings.Split(v, "+")[0]
+	return v
 }
 
 // getVersionFromLabel reads the greenhouse.sap/kubernetes-version label from the
