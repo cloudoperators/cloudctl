@@ -9,13 +9,18 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
+	"github.com/cloudoperators/greenhouse/api/v1alpha1"
 	. "github.com/onsi/gomega"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/version"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 func TestHasAuth(t *testing.T) {
@@ -139,4 +144,99 @@ func TestClusterVersionKubeconfigFlag_DefaultEqualsRecommendedHomeFile(t *testin
 	f := clusterVersionCmd.Flags().Lookup("kubeconfig")
 	g.Expect(f).ToNot(BeNil())
 	g.Expect(f.DefValue).To(Equal(clientcmd.RecommendedHomeFile))
+}
+
+func newGreenhouseFakeClient(objs ...v1alpha1.ClusterKubeconfig) *fake.ClientBuilder {
+	scheme := runtime.NewScheme()
+	_ = v1alpha1.AddToScheme(scheme)
+	builder := fake.NewClientBuilder().WithScheme(scheme)
+	for i := range objs {
+		builder = builder.WithObjects(&objs[i])
+	}
+	return builder
+}
+
+func TestVersionLabelFromClient_LabelPresent(t *testing.T) {
+	g := NewWithT(t)
+
+	ckc := v1alpha1.ClusterKubeconfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "prod-eu",
+			Namespace: "my-org",
+			Labels:    map[string]string{"greenhouse.sap/kubernetes-version": "1.29.3"},
+		},
+	}
+	c := newGreenhouseFakeClient(ckc).Build()
+
+	ver, err := versionLabelFromClient(context.Background(), c, "my-org", "prod-eu")
+	g.Expect(err).ToNot(HaveOccurred())
+	g.Expect(ver).To(Equal("1.29.3"))
+}
+
+func TestVersionLabelFromClient_LabelAbsent(t *testing.T) {
+	g := NewWithT(t)
+
+	ckc := v1alpha1.ClusterKubeconfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "prod-eu",
+			Namespace: "my-org",
+		},
+	}
+	c := newGreenhouseFakeClient(ckc).Build()
+
+	ver, err := versionLabelFromClient(context.Background(), c, "my-org", "prod-eu")
+	g.Expect(err).ToNot(HaveOccurred())
+	g.Expect(ver).To(BeEmpty())
+}
+
+func TestVersionLabelFromClient_NotFound(t *testing.T) {
+	g := NewWithT(t)
+
+	c := newGreenhouseFakeClient().Build()
+
+	ver, err := versionLabelFromClient(context.Background(), c, "my-org", "missing-cluster")
+	g.Expect(err).ToNot(HaveOccurred())
+	g.Expect(ver).To(BeEmpty())
+}
+
+func TestVersionLabelFromClient_WrongNamespace(t *testing.T) {
+	g := NewWithT(t)
+
+	ckc := v1alpha1.ClusterKubeconfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "prod-eu",
+			Namespace: "other-org",
+			Labels:    map[string]string{"greenhouse.sap/kubernetes-version": "1.30.0"},
+		},
+	}
+	c := newGreenhouseFakeClient(ckc).Build()
+
+	// Looking up in the wrong namespace returns not-found, falls back gracefully.
+	ver, err := versionLabelFromClient(context.Background(), c, "my-org", "prod-eu")
+	g.Expect(err).ToNot(HaveOccurred())
+	g.Expect(ver).To(BeEmpty())
+}
+
+func TestClusterVersionGreenhouseFlags(t *testing.T) {
+	g := NewWithT(t)
+
+	g.Expect(clusterVersionCmd.Flags().Lookup("greenhouse-cluster-kubeconfig")).ToNot(BeNil())
+	g.Expect(clusterVersionCmd.Flags().Lookup("greenhouse-cluster-context")).ToNot(BeNil())
+	g.Expect(clusterVersionCmd.Flags().Lookup("greenhouse-cluster-namespace")).ToNot(BeNil())
+	g.Expect(clusterVersionCmd.Flags().Lookup("greenhouse-cluster-name")).ToNot(BeNil())
+}
+
+func TestGetVersionFromLabel_BadKubeconfig(t *testing.T) {
+	g := NewWithT(t)
+
+	// A kubeconfig with invalid YAML should cause getVersionFromLabel to return an error.
+	f, err := os.CreateTemp("", "bad-kube-*.yaml")
+	g.Expect(err).ToNot(HaveOccurred())
+	defer os.Remove(f.Name())
+	_, _ = f.WriteString("invalid yaml: [")
+	f.Close()
+
+	ver, err := getVersionFromLabel(context.Background(), f.Name(), "", "my-org", "prod-eu")
+	g.Expect(err).To(HaveOccurred())
+	g.Expect(ver).To(BeEmpty())
 }

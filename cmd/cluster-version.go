@@ -9,16 +9,20 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/cloudoperators/greenhouse/api/v1alpha1"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/version"
 	"k8s.io/client-go/rest"
 	clientcmd "k8s.io/client-go/tools/clientcmd"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/cloudoperators/cloudctl/cmd/output"
 )
@@ -26,19 +30,26 @@ import (
 var clusterVersionCmd = &cobra.Command{
 	Use:   "cluster-version",
 	Short: "Print the Kubernetes server version for a kubeconfig context",
-	Long: `Queries the Kubernetes API server version for the given kubeconfig context.
+	Long: `Queries the Kubernetes server version for the given kubeconfig context.
 
-An unauthenticated GET to /version is attempted first (faster, no token
-refresh required). If the server requires authentication, cloudctl falls
-back to an authenticated GET to /version using the kubeconfig credentials.
+When Greenhouse connection flags are provided (--greenhouse-cluster-namespace and
+--greenhouse-cluster-name), the version is read from the greenhouse.sap/kubernetes-version
+label on the ClusterKubeconfig resource — faster and resilient to remote API downtime.
+
+If the label is absent or Greenhouse flags are not provided, cloudctl falls back to
+querying the remote cluster directly: an unauthenticated GET to /version is attempted
+first; if the server requires authentication, an authenticated GET is used instead.
 
 If the API server is unreachable the command exits after --timeout (default 10s).
 
 Examples:
-  # Version of the current context
+  # Version of the current context (live query)
   cloudctl cluster-version
 
-  # Version of a specific context
+  # Version from Greenhouse label (preferred when syncing via cloudctl)
+  cloudctl cluster-version -n my-org --greenhouse-cluster-name prod-eu
+
+  # Version of a specific context with live query
   cloudctl cluster-version --context prod-eu
 
   # Machine-readable output
@@ -52,6 +63,11 @@ Examples:
 var (
 	kubeconfig  string
 	kubecontext string
+
+	cvGreenhouseKubeconfig  string
+	cvGreenhouseContext     string
+	cvGreenhouseNamespace   string
+	cvGreenhouseClusterName string
 )
 
 func runClusterVersion(cmd *cobra.Command, args []string) error {
@@ -62,6 +78,11 @@ func runClusterVersion(cmd *cobra.Command, args []string) error {
 	if viper.IsSet("kubeconfig") && kubeconfig == "" {
 		return fmt.Errorf("--kubeconfig must not be empty")
 	}
+
+	cvGreenhouseKubeconfig = resolveKubeconfig("greenhouse-cluster-kubeconfig", viper.GetString("greenhouse-cluster-kubeconfig"))
+	cvGreenhouseContext = viper.GetString("greenhouse-cluster-context")
+	cvGreenhouseNamespace = viper.GetString("greenhouse-cluster-namespace")
+	cvGreenhouseClusterName = viper.GetString("greenhouse-cluster-name")
 
 	timeoutStr := viper.GetString("timeout")
 	timeout, err := time.ParseDuration(timeoutStr)
@@ -109,31 +130,79 @@ func runClusterVersion(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithTimeout(cmd.Context(), timeout)
 	defer cancel()
 
-	// 1) Try unauthenticated GET /version
-	ver, err := getUnauthenticatedVersion(ctx, cfg)
-	if err != nil {
-		// 2) Fallback to authenticated
-		if !hasAuth(cfg) {
-			stopQuery()
-			return fmt.Errorf("no authentication methods found in your kubeconfig. Please authenticate (`kubelogin`, etc.) and try again")
-		}
+	var clusterVersion string
 
-		ver, err = getAuthenticatedVersion(ctx, cfg)
-		if err != nil {
-			stopQuery()
-			return fmt.Errorf("authenticated version fetch failed: %w", err)
+	// 1) Try reading version from the ClusterKubeconfig label on Greenhouse.
+	if cvGreenhouseNamespace != "" && cvGreenhouseClusterName != "" {
+		labelVer, labelErr := getVersionFromLabel(ctx, cvGreenhouseKubeconfig, cvGreenhouseContext, cvGreenhouseNamespace, cvGreenhouseClusterName)
+		if labelErr != nil {
+			slog.Debug("label-based version lookup failed, falling back to live query", "error", labelErr)
+		} else if labelVer != "" {
+			clusterVersion = labelVer
 		}
 	}
+
+	if clusterVersion == "" {
+		// 2) Try unauthenticated GET /version
+		var ver *version.Info
+		ver, err = getUnauthenticatedVersion(ctx, cfg)
+		if err != nil {
+			// 3) Fallback to authenticated
+			if !hasAuth(cfg) {
+				stopQuery()
+				return fmt.Errorf("no authentication methods found in your kubeconfig. Please authenticate (`kubelogin`, etc.) and try again")
+			}
+
+			ver, err = getAuthenticatedVersion(ctx, cfg)
+			if err != nil {
+				stopQuery()
+				return fmt.Errorf("authenticated version fetch failed: %w", err)
+			}
+		}
+
+		// Strip build metadata so we get a clean semver string (e.g. "1.29.3").
+		parts := strings.Split(ver.GitVersion, "-")
+		clean := parts[0]
+		parts = strings.Split(clean, "+")
+		clean = parts[0]
+		clusterVersion = strings.TrimPrefix(clean, "v")
+	}
+
 	stopQuery()
-
-	// Strip build metadata so we get a clean semver string (e.g. "1.29.3").
-	parts := strings.Split(ver.GitVersion, "-")
-	clean := parts[0]
-	parts = strings.Split(clean, "+")
-	clean = parts[0]
-	clusterVersion := strings.TrimPrefix(clean, "v")
-
 	return printer.Print(output.ClusterVersionResult{Context: effectiveContext, Version: clusterVersion})
+}
+
+// getVersionFromLabel reads the greenhouse.sap/kubernetes-version label from the
+// named ClusterKubeconfig resource. Returns ("", nil) when the resource has no
+// such label or when the resource is not found, so callers can fall through to
+// a live query.
+func getVersionFromLabel(ctx context.Context, greenhouseKubeconfig, greenhouseContext, namespace, clusterName string) (string, error) {
+	cfg, err := configWithContext(greenhouseContext, greenhouseKubeconfig)
+	if err != nil {
+		return "", fmt.Errorf("failed to build greenhouse kubeconfig: %w", err)
+	}
+
+	scheme := runtime.NewScheme()
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		return "", fmt.Errorf("failed to add greenhouse scheme: %w", err)
+	}
+
+	c, err := client.New(cfg, client.Options{Scheme: scheme})
+	if err != nil {
+		return "", fmt.Errorf("failed to create greenhouse client: %w", err)
+	}
+
+	return versionLabelFromClient(ctx, c, namespace, clusterName)
+}
+
+// versionLabelFromClient fetches the greenhouse.sap/kubernetes-version label
+// using an already-constructed client. Separated for testability.
+func versionLabelFromClient(ctx context.Context, c client.Client, namespace, clusterName string) (string, error) {
+	var ckc v1alpha1.ClusterKubeconfig
+	if err := c.Get(ctx, client.ObjectKey{Namespace: namespace, Name: clusterName}, &ckc); err != nil {
+		return "", nil
+	}
+	return ckc.Labels["greenhouse.sap/kubernetes-version"], nil
 }
 
 // hasAuth returns true if the rest.Config contains any credential source.
@@ -250,6 +319,11 @@ func init() {
 	clusterVersionCmd.Flags().StringVarP(&kubeconfig, "kubeconfig", "k", clientcmd.RecommendedHomeFile, "Path to kubeconfig file")
 	clusterVersionCmd.Flags().StringVarP(&kubecontext, "context", "c", "", "Kubeconfig context to query (defaults to current context)")
 	clusterVersionCmd.Flags().String("timeout", "10s", "Maximum time to wait for the API server to respond")
+
+	clusterVersionCmd.Flags().StringVarP(&cvGreenhouseKubeconfig, "greenhouse-cluster-kubeconfig", "g", clientcmd.RecommendedHomeFile, "Path to the Greenhouse cluster kubeconfig (for label-based version lookup)")
+	clusterVersionCmd.Flags().StringVar(&cvGreenhouseContext, "greenhouse-cluster-context", "", "Context to use from the Greenhouse kubeconfig")
+	clusterVersionCmd.Flags().StringVarP(&cvGreenhouseNamespace, "greenhouse-cluster-namespace", "n", "", "Greenhouse organization namespace")
+	clusterVersionCmd.Flags().StringVar(&cvGreenhouseClusterName, "greenhouse-cluster-name", "", "ClusterKubeconfig resource name in Greenhouse to read the version label from")
 
 	// BindPFlags can theoretically return an error if called with `nil` as an argument
 	// which should never happen after at least one flag was defined. That's why the output
