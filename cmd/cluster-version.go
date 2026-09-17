@@ -79,16 +79,18 @@ func runClusterVersion(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--kubeconfig must not be empty")
 	}
 
-	// Read Greenhouse flags from the cv.* viper keys, which are bound only to
+	// Read Greenhouse flags from the cv-* viper keys, which are bound only to
 	// cluster-version's flags (not sync.go's), so env vars and config files
 	// work without colliding with sync's identically-named viper bindings.
-	cvGreenhouseKubeconfig = resolveKubeconfig("cv.greenhouse-cluster-kubeconfig", viper.GetString("cv.greenhouse-cluster-kubeconfig"))
-	if viper.IsSet("cv.greenhouse-cluster-kubeconfig") && cvGreenhouseKubeconfig == "" {
+	// Using a hyphen separator (cv-*) rather than a dot ensures the global
+	// SetEnvKeyReplacer("-","_") maps CLOUDCTL_CV_GREENHOUSE_* correctly.
+	cvGreenhouseKubeconfig = resolveKubeconfig("cv-greenhouse-cluster-kubeconfig", viper.GetString("cv-greenhouse-cluster-kubeconfig"))
+	if viper.IsSet("cv-greenhouse-cluster-kubeconfig") && cvGreenhouseKubeconfig == "" {
 		return fmt.Errorf("--greenhouse-cluster-kubeconfig must not be empty")
 	}
-	cvGreenhouseContext = viper.GetString("cv.greenhouse-cluster-context")
-	cvGreenhouseNamespace = viper.GetString("cv.greenhouse-cluster-namespace")
-	cvGreenhouseClusterName = viper.GetString("cv.greenhouse-cluster-name")
+	cvGreenhouseContext = viper.GetString("cv-greenhouse-cluster-context")
+	cvGreenhouseNamespace = viper.GetString("cv-greenhouse-cluster-namespace")
+	cvGreenhouseClusterName = viper.GetString("cv-greenhouse-cluster-name")
 
 	timeoutStr := viper.GetString("timeout")
 	timeout, err := time.ParseDuration(timeoutStr)
@@ -349,13 +351,13 @@ func init() {
 	// Bind the shared flags (kubeconfig, context, timeout, output) to their standard viper keys.
 	_ = viper.BindPFlags(clusterVersionCmd.Flags())
 
-	// Bind Greenhouse flags under a cv.* prefix so they do not collide with the
+	// Bind Greenhouse flags under a cv-* prefix so they do not collide with the
 	// identically-named flags registered by sync.go in the global viper instance.
-	// This lets CLOUDCTL_CV_GREENHOUSE_CLUSTER_* env vars and .cloudctl.yaml
-	// [cv] section override these flags without touching sync's bindings.
+	// Using a hyphen separator (not dot) ensures SetEnvKeyReplacer("-","_") maps
+	// CLOUDCTL_CV_GREENHOUSE_CLUSTER_* env vars to these keys correctly.
 	f := clusterVersionCmd.Flags()
-	_ = viper.BindPFlag("cv.greenhouse-cluster-kubeconfig", f.Lookup("greenhouse-cluster-kubeconfig"))
-	_ = viper.BindPFlag("cv.greenhouse-cluster-context", f.Lookup("greenhouse-cluster-context"))
-	_ = viper.BindPFlag("cv.greenhouse-cluster-namespace", f.Lookup("greenhouse-cluster-namespace"))
-	_ = viper.BindPFlag("cv.greenhouse-cluster-name", f.Lookup("greenhouse-cluster-name"))
+	_ = viper.BindPFlag("cv-greenhouse-cluster-kubeconfig", f.Lookup("greenhouse-cluster-kubeconfig"))
+	_ = viper.BindPFlag("cv-greenhouse-cluster-context", f.Lookup("greenhouse-cluster-context"))
+	_ = viper.BindPFlag("cv-greenhouse-cluster-namespace", f.Lookup("greenhouse-cluster-namespace"))
+	_ = viper.BindPFlag("cv-greenhouse-cluster-name", f.Lookup("greenhouse-cluster-name"))
 }

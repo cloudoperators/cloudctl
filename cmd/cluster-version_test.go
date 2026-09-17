@@ -293,10 +293,10 @@ func buildTestClusterVersionCmd() *cobra.Command {
 	cmd.Flags().StringVar(&cvGreenhouseClusterName, "greenhouse-cluster-name", "", "")
 	cmd.Flags().StringP("output", "o", "text", "")
 	_ = viper.BindPFlags(cmd.Flags())
-	_ = viper.BindPFlag("cv.greenhouse-cluster-kubeconfig", cmd.Flags().Lookup("greenhouse-cluster-kubeconfig"))
-	_ = viper.BindPFlag("cv.greenhouse-cluster-context", cmd.Flags().Lookup("greenhouse-cluster-context"))
-	_ = viper.BindPFlag("cv.greenhouse-cluster-namespace", cmd.Flags().Lookup("greenhouse-cluster-namespace"))
-	_ = viper.BindPFlag("cv.greenhouse-cluster-name", cmd.Flags().Lookup("greenhouse-cluster-name"))
+	_ = viper.BindPFlag("cv-greenhouse-cluster-kubeconfig", cmd.Flags().Lookup("greenhouse-cluster-kubeconfig"))
+	_ = viper.BindPFlag("cv-greenhouse-cluster-context", cmd.Flags().Lookup("greenhouse-cluster-context"))
+	_ = viper.BindPFlag("cv-greenhouse-cluster-namespace", cmd.Flags().Lookup("greenhouse-cluster-namespace"))
+	_ = viper.BindPFlag("cv-greenhouse-cluster-name", cmd.Flags().Lookup("greenhouse-cluster-name"))
 	return cmd
 }
 
