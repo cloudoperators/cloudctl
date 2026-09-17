@@ -7,13 +7,17 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/cloudoperators/greenhouse/api/v1alpha1"
 	. "github.com/onsi/gomega"
+	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/version"
@@ -252,4 +256,109 @@ func TestGetVersionFromLabel_BadKubeconfig(t *testing.T) {
 	ver, err := getVersionFromLabel(context.Background(), f.Name(), "", "my-org", "prod-eu")
 	g.Expect(err).To(HaveOccurred())
 	g.Expect(ver).To(BeEmpty())
+}
+
+// writeTLSKubeconfig writes a minimal kubeconfig that points at srv and returns its path.
+// It uses insecure-skip-tls-verify so the test server's self-signed cert is accepted.
+func writeTLSKubeconfig(t *testing.T, srv *httptest.Server) string {
+	t.Helper()
+	g := NewWithT(t)
+
+	f, err := os.CreateTemp("", "kubeconfig-*.yaml")
+	g.Expect(err).ToNot(HaveOccurred())
+	t.Cleanup(func() { _ = os.Remove(f.Name()) })
+
+	cfg := "apiVersion: v1\nkind: Config\nclusters:\n- cluster:\n    server: " + srv.URL + "\n    insecure-skip-tls-verify: true\n  name: test\ncontexts:\n- context:\n    cluster: test\n    user: test\n  name: test\ncurrent-context: test\nusers:\n- name: test\n  user: {}\n"
+	_, err = f.WriteString(cfg)
+	g.Expect(err).ToNot(HaveOccurred())
+	g.Expect(f.Close()).To(Succeed())
+	return f.Name()
+}
+
+// buildTestClusterVersionCmd returns a fresh cobra.Command wired to runClusterVersion
+// with all flags registered, suitable for use in integration tests.
+func buildTestClusterVersionCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:           "cluster-version",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE:          runClusterVersion,
+	}
+	cmd.Flags().StringVarP(&kubeconfig, "kubeconfig", "k", clientcmd.RecommendedHomeFile, "")
+	cmd.Flags().StringVarP(&kubecontext, "context", "c", "", "")
+	cmd.Flags().String("timeout", "10s", "")
+	cmd.Flags().StringVarP(&cvGreenhouseKubeconfig, "greenhouse-cluster-kubeconfig", "g", clientcmd.RecommendedHomeFile, "")
+	cmd.Flags().StringVar(&cvGreenhouseContext, "greenhouse-cluster-context", "", "")
+	cmd.Flags().StringVarP(&cvGreenhouseNamespace, "greenhouse-cluster-namespace", "n", "", "")
+	cmd.Flags().StringVar(&cvGreenhouseClusterName, "greenhouse-cluster-name", "", "")
+	cmd.Flags().StringP("output", "o", "text", "")
+	_ = viper.BindPFlags(cmd.Flags())
+	_ = viper.BindPFlag("cv.greenhouse-cluster-kubeconfig", cmd.Flags().Lookup("greenhouse-cluster-kubeconfig"))
+	_ = viper.BindPFlag("cv.greenhouse-cluster-context", cmd.Flags().Lookup("greenhouse-cluster-context"))
+	_ = viper.BindPFlag("cv.greenhouse-cluster-namespace", cmd.Flags().Lookup("greenhouse-cluster-namespace"))
+	_ = viper.BindPFlag("cv.greenhouse-cluster-name", cmd.Flags().Lookup("greenhouse-cluster-name"))
+	return cmd
+}
+
+func TestRunClusterVersion_LabelPathShortCircuitsLiveQuery(t *testing.T) {
+	g := NewWithT(t)
+
+	// Remote cluster server — must NOT be called when the label path succeeds.
+	liveCallCount := 0
+	remoteSrv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		liveCallCount++
+		t.Errorf("unexpected live /version call to remote cluster")
+		_ = json.NewEncoder(w).Encode(&version.Info{GitVersion: "v9.9.9"})
+	}))
+	defer remoteSrv.Close()
+
+	remoteKubeconfig := writeTLSKubeconfig(t, remoteSrv)
+
+	// Inject a fake label lookup that returns a version without hitting any server.
+	original := clusterVersionLabelLookup
+	t.Cleanup(func() { clusterVersionLabelLookup = original })
+	clusterVersionLabelLookup = func(_ context.Context, _, _, _, _ string) (string, error) {
+		return "v1.29.3", nil
+	}
+
+	cmd := buildTestClusterVersionCmd()
+	cmd.SetArgs([]string{"--kubeconfig", remoteKubeconfig, "-n", "my-org", "--greenhouse-cluster-name", "prod-eu"})
+	var out strings.Builder
+	cmd.SetOut(&out)
+	g.Expect(cmd.ExecuteContext(context.Background())).To(Succeed())
+	g.Expect(out.String()).To(ContainSubstring("1.29.3"))
+	g.Expect(liveCallCount).To(Equal(0), "live /version should not have been called")
+}
+
+func TestRunClusterVersion_LabelErrorFallsBackToLiveQuery(t *testing.T) {
+	g := NewWithT(t)
+
+	// Remote cluster server — must be called as fallback when label lookup fails.
+	liveCallCount := 0
+	remoteSrv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/version" {
+			liveCallCount++
+			_ = json.NewEncoder(w).Encode(&version.Info{GitVersion: "v1.30.0"})
+		} else {
+			http.NotFound(w, r)
+		}
+	}))
+	defer remoteSrv.Close()
+
+	remoteKubeconfig := writeTLSKubeconfig(t, remoteSrv)
+
+	// Inject a fake label lookup that always returns an error.
+	original := clusterVersionLabelLookup
+	t.Cleanup(func() { clusterVersionLabelLookup = original })
+	clusterVersionLabelLookup = func(_ context.Context, _, _, _, _ string) (string, error) {
+		return "", fmt.Errorf("greenhouse unavailable")
+	}
+
+	cmd := buildTestClusterVersionCmd()
+	cmd.SetArgs([]string{"--kubeconfig", remoteKubeconfig, "-n", "my-org", "--greenhouse-cluster-name", "prod-eu"})
+	var out strings.Builder
+	cmd.SetOut(&out)
+	g.Expect(cmd.ExecuteContext(context.Background())).To(Succeed())
+	g.Expect(out.String()).To(ContainSubstring("1.30.0"))
+	g.Expect(liveCallCount).To(BeNumerically(">=", 1), "live /version should have been called as fallback")
 }

@@ -79,20 +79,16 @@ func runClusterVersion(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--kubeconfig must not be empty")
 	}
 
-	// Read Greenhouse flags directly from the cobra flag set to avoid Viper key
-	// collisions with the identically-named flags registered by sync.go.
-	// Use cmd.Flags().Changed() instead of viper.IsSet() for the same reason.
-	cvGreenhouseKubeconfig, _ = cmd.Flags().GetString("greenhouse-cluster-kubeconfig")
-	if cmd.Flags().Changed("greenhouse-cluster-kubeconfig") {
-		if cvGreenhouseKubeconfig == "" {
-			return fmt.Errorf("--greenhouse-cluster-kubeconfig must not be empty")
-		}
-	} else if os.Getenv("KUBECONFIG") != "" {
-		cvGreenhouseKubeconfig = ""
+	// Read Greenhouse flags from the cv.* viper keys, which are bound only to
+	// cluster-version's flags (not sync.go's), so env vars and config files
+	// work without colliding with sync's identically-named viper bindings.
+	cvGreenhouseKubeconfig = resolveKubeconfig("cv.greenhouse-cluster-kubeconfig", viper.GetString("cv.greenhouse-cluster-kubeconfig"))
+	if viper.IsSet("cv.greenhouse-cluster-kubeconfig") && cvGreenhouseKubeconfig == "" {
+		return fmt.Errorf("--greenhouse-cluster-kubeconfig must not be empty")
 	}
-	cvGreenhouseContext, _ = cmd.Flags().GetString("greenhouse-cluster-context")
-	cvGreenhouseNamespace, _ = cmd.Flags().GetString("greenhouse-cluster-namespace")
-	cvGreenhouseClusterName, _ = cmd.Flags().GetString("greenhouse-cluster-name")
+	cvGreenhouseContext = viper.GetString("cv.greenhouse-cluster-context")
+	cvGreenhouseNamespace = viper.GetString("cv.greenhouse-cluster-namespace")
+	cvGreenhouseClusterName = viper.GetString("cv.greenhouse-cluster-name")
 
 	timeoutStr := viper.GetString("timeout")
 	timeout, err := time.ParseDuration(timeoutStr)
@@ -147,7 +143,7 @@ func runClusterVersion(cmd *cobra.Command, args []string) error {
 	// meaningful deadline even if the Greenhouse cluster is slow to respond.
 	if cvGreenhouseNamespace != "" && cvGreenhouseClusterName != "" {
 		labelCtx, labelCancel := context.WithTimeout(cmd.Context(), timeout/2)
-		labelVer, labelErr := getVersionFromLabel(labelCtx, cvGreenhouseKubeconfig, cvGreenhouseContext, cvGreenhouseNamespace, cvGreenhouseClusterName)
+		labelVer, labelErr := clusterVersionLabelLookup(labelCtx, cvGreenhouseKubeconfig, cvGreenhouseContext, cvGreenhouseNamespace, cvGreenhouseClusterName)
 		labelCancel()
 		if labelErr != nil {
 			slog.Debug("label-based version lookup failed, falling back to live query", "error", labelErr)
@@ -181,6 +177,10 @@ func runClusterVersion(cmd *cobra.Command, args []string) error {
 	stopQuery()
 	return printer.Print(output.ClusterVersionResult{Context: effectiveContext, Version: clusterVersion})
 }
+
+// clusterVersionLabelLookup is the function used to fetch the version label from
+// Greenhouse. It is a variable so tests can substitute a fake implementation.
+var clusterVersionLabelLookup = getVersionFromLabel
 
 // normalizeVersion strips a leading "v", prerelease suffix, and build metadata
 // from a Kubernetes version string, returning a clean semver (e.g. "1.29.3").
@@ -346,8 +346,16 @@ func init() {
 	clusterVersionCmd.Flags().StringVarP(&cvGreenhouseNamespace, "greenhouse-cluster-namespace", "n", "", "Greenhouse organization namespace")
 	clusterVersionCmd.Flags().StringVar(&cvGreenhouseClusterName, "greenhouse-cluster-name", "", "ClusterKubeconfig resource name in Greenhouse to read the version label from")
 
-	// BindPFlags can theoretically return an error if called with `nil` as an argument
-	// which should never happen after at least one flag was defined. That's why the output
-	// there is ignored.
+	// Bind the shared flags (kubeconfig, context, timeout, output) to their standard viper keys.
 	_ = viper.BindPFlags(clusterVersionCmd.Flags())
+
+	// Bind Greenhouse flags under a cv.* prefix so they do not collide with the
+	// identically-named flags registered by sync.go in the global viper instance.
+	// This lets CLOUDCTL_CV_GREENHOUSE_CLUSTER_* env vars and .cloudctl.yaml
+	// [cv] section override these flags without touching sync's bindings.
+	f := clusterVersionCmd.Flags()
+	_ = viper.BindPFlag("cv.greenhouse-cluster-kubeconfig", f.Lookup("greenhouse-cluster-kubeconfig"))
+	_ = viper.BindPFlag("cv.greenhouse-cluster-context", f.Lookup("greenhouse-cluster-context"))
+	_ = viper.BindPFlag("cv.greenhouse-cluster-namespace", f.Lookup("greenhouse-cluster-namespace"))
+	_ = viper.BindPFlag("cv.greenhouse-cluster-name", f.Lookup("greenhouse-cluster-name"))
 }
