@@ -81,10 +81,14 @@ func runClusterVersion(cmd *cobra.Command, args []string) error {
 
 	// Read Greenhouse flags directly from the cobra flag set to avoid Viper key
 	// collisions with the identically-named flags registered by sync.go.
+	// Use cmd.Flags().Changed() instead of viper.IsSet() for the same reason.
 	cvGreenhouseKubeconfig, _ = cmd.Flags().GetString("greenhouse-cluster-kubeconfig")
-	cvGreenhouseKubeconfig = resolveKubeconfig("greenhouse-cluster-kubeconfig", cvGreenhouseKubeconfig)
-	if cmd.Flags().Changed("greenhouse-cluster-kubeconfig") && cvGreenhouseKubeconfig == "" {
-		return fmt.Errorf("--greenhouse-cluster-kubeconfig must not be empty")
+	if cmd.Flags().Changed("greenhouse-cluster-kubeconfig") {
+		if cvGreenhouseKubeconfig == "" {
+			return fmt.Errorf("--greenhouse-cluster-kubeconfig must not be empty")
+		}
+	} else if os.Getenv("KUBECONFIG") != "" {
+		cvGreenhouseKubeconfig = ""
 	}
 	cvGreenhouseContext, _ = cmd.Flags().GetString("greenhouse-cluster-context")
 	cvGreenhouseNamespace, _ = cmd.Flags().GetString("greenhouse-cluster-namespace")
