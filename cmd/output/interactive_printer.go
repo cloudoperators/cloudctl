@@ -125,6 +125,39 @@ func (p *interactivePrinter) Print(v any) error {
 		default:
 			w("cloudctl update status: %s (current: %s, latest: %s)\n", t.Status, t.CurrentVersion, t.LatestVersion)
 		}
+	case BootstrapResult:
+		if t.DryRun {
+			w("%s\n\n", styleFaint.Render("Dry-run: no changes will be written."))
+		}
+		for _, entry := range t.Added {
+			w("  %s %s\n", styleGreen.Render("[+]"), entry)
+		}
+		for _, entry := range t.Skipped {
+			w("  %s %s\n", styleFaint.Render("[=]"), entry)
+		}
+		nothingNew := len(t.Added) == 0 && !t.CurrentContextUpdated
+		if nothingNew && len(t.Skipped) > 0 {
+			w("%s\n", styleFaint.Render("Bootstrap: nothing new to write — all entries already exist."))
+			break
+		}
+		if t.DryRun {
+			w("\n%s\n", styleFaint.Render("Bootstrap complete (dry-run). Run without --dry-run to apply."))
+			break
+		}
+		w("\n%s\n", styleGreen.Render("Bootstrap complete."))
+		if t.KubeconfigPath != "" {
+			w("  %s %s\n", styleFaint.Render("kubeconfig:"), t.KubeconfigPath)
+		}
+		w("  %s %s\n", styleFaint.Render("context:   "), styleBold.Render(t.ContextName))
+		if t.SetAsCurrent {
+			w("  %s\n", styleFaint.Render("set as current context."))
+		}
+		org := t.Org
+		if org == "" {
+			org = strings.TrimPrefix(t.ContextName, "greenhouse-")
+		}
+		w("\nRun %s to pull in your cluster access.\n",
+			styleBold.Render(fmt.Sprintf("cloudctl sync -n %s", org)))
 	default:
 		w("%v\n", v)
 	}
