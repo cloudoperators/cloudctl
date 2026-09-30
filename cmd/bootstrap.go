@@ -117,6 +117,8 @@ func runBootstrap(cmd *cobra.Command, args []string) error {
 	} else if kc := os.Getenv("KUBECONFIG"); kc != "" {
 		if parts := strings.SplitN(kc, string(os.PathListSeparator), 2); len(parts) > 0 && parts[0] != "" {
 			bootstrapKubeconfig = parts[0]
+		} else {
+			return fmt.Errorf("cannot determine write target: KUBECONFIG=%q contains no usable first path", kc)
 		}
 	} else {
 		bootstrapKubeconfig = clientcmd.RecommendedHomeFile

@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	. "github.com/onsi/gomega"
+	"github.com/spf13/pflag"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
@@ -104,6 +105,10 @@ func runBootstrapCmd(t *testing.T, args []string) (stdout, stderr string, err er
 	bootstrapContextName = ""
 	bootstrapSetCurrentCtx = false
 	bootstrapDryRun = false
+
+	// Reset cobra's "Changed" state on bootstrapCmd flags so flag.Changed() is
+	// accurate for each test regardless of what previous tests passed.
+	bootstrapCmd.Flags().VisitAll(func(f *pflag.Flag) { f.Changed = false })
 
 	outBuf := &bytes.Buffer{}
 	errBuf := &bytes.Buffer{}
@@ -880,4 +885,20 @@ func TestBootstrapCmd_RawBase64Encoding(t *testing.T) {
 	g.Expect(err).To(BeNil())
 	result := loadKubeconfig(t, dest)
 	g.Expect(result.Clusters).To(HaveKey("greenhouse-sap-cna"))
+}
+
+func TestBootstrapCmd_KUBECONFIGEmptyFirstSegment(t *testing.T) {
+	g := NewWithT(t)
+	cfg := realGreenhouseKubeconfig("sap")
+	data := encodeKubeconfig(t, cfg)
+
+	second := writeTempKubeconfig(t, clientcmdapi.NewConfig())
+	t.Setenv("KUBECONFIG", string(os.PathListSeparator)+second)
+
+	_, _, err := runBootstrapCmd(t, []string{
+		"--data=" + data,
+		"--context-name=greenhouse-sap",
+	})
+	g.Expect(err).To(HaveOccurred())
+	g.Expect(err.Error()).To(ContainSubstring("no usable first path"))
 }
