@@ -110,7 +110,8 @@ func (p *plainPrinter) Print(v any) error {
 		for _, entry := range t.Skipped {
 			w("  [=] %s\n", entry)
 		}
-		if len(t.Added) == 0 && len(t.Skipped) > 0 {
+		nothingNew := len(t.Added) == 0 && !t.CurrentContextUpdated
+		if nothingNew && len(t.Skipped) > 0 {
 			w("Bootstrap: nothing new to write — all entries already exist.\n")
 			break
 		}

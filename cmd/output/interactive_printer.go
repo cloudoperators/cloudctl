@@ -130,12 +130,13 @@ func (p *interactivePrinter) Print(v any) error {
 			w("%s\n\n", styleFaint.Render("Dry-run: no changes will be written."))
 		}
 		for _, entry := range t.Added {
-			w("  %s %s\n", styleGreen.Render("+"), entry)
+			w("  %s %s\n", styleGreen.Render("[+]"), entry)
 		}
 		for _, entry := range t.Skipped {
-			w("  %s %s\n", styleFaint.Render("="), entry)
+			w("  %s %s\n", styleFaint.Render("[=]"), entry)
 		}
-		if len(t.Added) == 0 && len(t.Skipped) > 0 {
+		nothingNew := len(t.Added) == 0 && !t.CurrentContextUpdated
+		if nothingNew && len(t.Skipped) > 0 {
 			w("%s\n", styleFaint.Render("Bootstrap: nothing new to write — all entries already exist."))
 			break
 		}

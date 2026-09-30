@@ -153,6 +153,14 @@ func runBootstrap(cmd *cobra.Command, args []string) error {
 		defaultCtxName = "greenhouse"
 	}
 
+	// Capture org from the selected context's namespace before any rename, so
+	// the sync hint is correct even when --context-name differs from greenhouse-<org>.
+	if org == "" {
+		if ctxEntry, ok := incoming.Contexts[defaultCtxName]; ok && ctxEntry.Namespace != "" {
+			org = ctxEntry.Namespace
+		}
+	}
+
 	contextName := bootstrapContextName
 	if contextName == "" {
 		contextName = defaultCtxName
@@ -177,14 +185,21 @@ func runBootstrap(cmd *cobra.Command, args []string) error {
 	// Rename entries in the incoming config to use the chosen context name.
 	renameKubeconfigContext(incoming, contextName)
 
-	// Load or create the local kubeconfig.
+	// Load or create the local kubeconfig. When --kubeconfig was not explicitly
+	// set, load through the default rules to honour KUBECONFIG env var and merge
+	// multiple files; still write only to bootstrapKubeconfig (first path).
 	var localConfig *clientcmdapi.Config
-	if bootstrapKubeconfig != "" {
+	if cmd.Flags().Changed("kubeconfig") {
 		if _, statErr := os.Stat(bootstrapKubeconfig); statErr == nil {
 			localConfig, err = clientcmd.LoadFromFile(bootstrapKubeconfig)
 			if err != nil {
 				return fmt.Errorf("failed to load local kubeconfig %q: %w", bootstrapKubeconfig, err)
 			}
+		}
+	} else {
+		localConfig, err = clientcmd.NewDefaultClientConfigLoadingRules().Load()
+		if err != nil {
+			return fmt.Errorf("failed to load kubeconfig: %w", err)
 		}
 	}
 	if localConfig == nil {
@@ -228,6 +243,23 @@ func resolveIncomingKubeconfig() (*clientcmdapi.Config, string, error) {
 		if len(cfg.Clusters) == 0 {
 			return nil, "", fmt.Errorf("--data kubeconfig contains no clusters")
 		}
+		// Verify we can identify exactly which context to use.
+		if cfg.CurrentContext == "" && len(cfg.Contexts) != 1 {
+			return nil, "", fmt.Errorf("--data kubeconfig has no current-context and contains %d contexts; set one explicitly with kubectl config use-context", len(cfg.Contexts))
+		}
+		activeCtx := cfg.CurrentContext
+		if activeCtx == "" {
+			for name := range cfg.Contexts {
+				activeCtx = name
+			}
+		}
+		if ctx, ok := cfg.Contexts[activeCtx]; !ok || ctx == nil {
+			return nil, "", fmt.Errorf("--data kubeconfig current-context %q not found in contexts", activeCtx)
+		} else if _, clOK := cfg.Clusters[ctx.Cluster]; !clOK {
+			return nil, "", fmt.Errorf("--data kubeconfig context %q references unknown cluster %q", activeCtx, ctx.Cluster)
+		} else if _, aiOK := cfg.AuthInfos[ctx.AuthInfo]; !aiOK {
+			return nil, "", fmt.Errorf("--data kubeconfig context %q references unknown user %q", activeCtx, ctx.AuthInfo)
+		}
 		return cfg, bootstrapOrg, nil
 	}
 
@@ -262,7 +294,7 @@ func resolveIncomingKubeconfig() (*clientcmdapi.Config, string, error) {
 //	      config:
 //	        idp-issuer-url: ...
 //	        client-id: ...
-//	        client-secret: ...   (omitted when empty)
+//	        client-secret: ...   (always present; may be empty string)
 //	        extra-scopes: ...    (omitted when empty)
 func buildOIDCKubeconfig(server, org, caDataB64, idpIssuerURL, clientID, clientSecret, extraScopes, namespace string) (*clientcmdapi.Config, error) {
 	name := fmt.Sprintf("greenhouse-%s", org)
@@ -313,6 +345,7 @@ func buildOIDCKubeconfig(server, org, caDataB64, idpIssuerURL, clientID, clientS
 // renameKubeconfigContext renames the active context (and its referenced cluster/authinfo)
 // in cfg to targetName. When there is exactly one context it is always the one renamed.
 // All other entries (multiple contexts in a blob) are left untouched.
+// Old cluster/authinfo keys are only removed when no other context still references them.
 func renameKubeconfigContext(cfg *clientcmdapi.Config, targetName string) {
 	// Identify which context to rename: prefer CurrentContext, fall back to the only one.
 	source := cfg.CurrentContext
@@ -337,18 +370,38 @@ func renameKubeconfigContext(cfg *clientcmdapi.Config, targetName string) {
 	oldCluster := ctx.Cluster
 	oldAuth := ctx.AuthInfo
 
+	// Only delete the old cluster key if no other context (other than source) references it.
+	clusterRefCount := 0
+	for ctxName, c := range cfg.Contexts {
+		if ctxName != source && c.Cluster == oldCluster {
+			clusterRefCount++
+		}
+	}
+
 	// Rename cluster.
 	if cl, ok := cfg.Clusters[oldCluster]; ok && oldCluster != targetName {
 		cfg.Clusters[targetName] = cl
-		delete(cfg.Clusters, oldCluster)
 		ctx.Cluster = targetName
+		if clusterRefCount == 0 {
+			delete(cfg.Clusters, oldCluster)
+		}
+	}
+
+	// Only delete the old authinfo key if no other context (other than source) references it.
+	authRefCount := 0
+	for ctxName, c := range cfg.Contexts {
+		if ctxName != source && c.AuthInfo == oldAuth {
+			authRefCount++
+		}
 	}
 
 	// Rename authinfo.
 	if ai, ok := cfg.AuthInfos[oldAuth]; ok && oldAuth != targetName {
 		cfg.AuthInfos[targetName] = ai
-		delete(cfg.AuthInfos, oldAuth)
 		ctx.AuthInfo = targetName
+		if authRefCount == 0 {
+			delete(cfg.AuthInfos, oldAuth)
+		}
 	}
 
 	// Rename context.
@@ -359,6 +412,8 @@ func renameKubeconfigContext(cfg *clientcmdapi.Config, targetName string) {
 
 // mergeBootstrapKubeconfig merges the incoming config into localConfig.
 // Existing entries are never overwritten.
+// Cluster, authinfo, and context for a given name are treated as an atomic unit:
+// if the cluster already exists with a different server, all three are skipped together.
 func mergeBootstrapKubeconfig(localConfig, incoming *clientcmdapi.Config, ctxName string, setCurrentCtx bool, org string) (output.BootstrapResult, error) {
 	result := output.BootstrapResult{
 		ContextName:  ctxName,
@@ -393,8 +448,9 @@ func mergeBootstrapKubeconfig(localConfig, incoming *clientcmdapi.Config, ctxNam
 		}
 	}
 
-	if setCurrentCtx {
+	if setCurrentCtx && localConfig.CurrentContext != ctxName {
 		localConfig.CurrentContext = ctxName
+		result.CurrentContextUpdated = true
 	}
 
 	return result, nil

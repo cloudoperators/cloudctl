@@ -279,6 +279,31 @@ func TestRenameKubeconfigContext_MultiContextBlobOnlyRenamesCurrent(t *testing.T
 	g.Expect(cfg.CurrentContext).To(Equal("gh-prod"))
 }
 
+func TestRenameKubeconfigContext_SharedClusterPreserved(t *testing.T) {
+	g := NewWithT(t)
+
+	// Two contexts share the same cluster and authinfo — renaming one should
+	// not delete the shared keys.
+	cfg := clientcmdapi.NewConfig()
+	cfg.Clusters["shared-cluster"] = &clientcmdapi.Cluster{Server: "https://shared.example.com"}
+	cfg.AuthInfos["shared-user"] = &clientcmdapi.AuthInfo{}
+	cfg.Contexts["ctx-a"] = &clientcmdapi.Context{Cluster: "shared-cluster", AuthInfo: "shared-user"}
+	cfg.Contexts["ctx-b"] = &clientcmdapi.Context{Cluster: "shared-cluster", AuthInfo: "shared-user"}
+	cfg.CurrentContext = "ctx-a"
+
+	renameKubeconfigContext(cfg, "gh-prod")
+
+	// The renamed context uses new keys.
+	g.Expect(cfg.Contexts).To(HaveKey("gh-prod"))
+	g.Expect(cfg.Contexts).NotTo(HaveKey("ctx-a"))
+	// ctx-b still references shared-cluster and shared-user — they must not be deleted.
+	g.Expect(cfg.Clusters).To(HaveKey("shared-cluster"))
+	g.Expect(cfg.AuthInfos).To(HaveKey("shared-user"))
+	// The renamed context also gets gh-prod cluster/user copies.
+	g.Expect(cfg.Clusters).To(HaveKey("gh-prod"))
+	g.Expect(cfg.AuthInfos).To(HaveKey("gh-prod"))
+}
+
 // ── mergeBootstrapKubeconfig ──────────────────────────────────────────────────
 
 func TestMergeBootstrapKubeconfig_AddsAllEntries(t *testing.T) {
@@ -304,9 +329,10 @@ func TestMergeBootstrapKubeconfig_SetsCurrentContext(t *testing.T) {
 	local := clientcmdapi.NewConfig()
 	incoming := realGreenhouseKubeconfig("sap-cna")
 
-	_, err := mergeBootstrapKubeconfig(local, incoming, "greenhouse-sap-cna", true, "sap-cna")
+	result, err := mergeBootstrapKubeconfig(local, incoming, "greenhouse-sap-cna", true, "sap-cna")
 	g.Expect(err).To(BeNil())
 	g.Expect(local.CurrentContext).To(Equal("greenhouse-sap-cna"))
+	g.Expect(result.CurrentContextUpdated).To(BeTrue())
 }
 
 func TestMergeBootstrapKubeconfig_IdempotentSkipsExisting(t *testing.T) {
@@ -420,6 +446,40 @@ func TestResolveIncomingKubeconfig_DataBlobEmptyClusters(t *testing.T) {
 
 	_, _, err := resolveIncomingKubeconfig()
 	g.Expect(err).To(MatchError(ContainSubstring("no clusters")))
+}
+
+func TestResolveIncomingKubeconfig_DataBlobNoCurrentContext(t *testing.T) {
+	g := NewWithT(t)
+
+	// Two contexts, no CurrentContext set — ambiguous, should error.
+	cfg := clientcmdapi.NewConfig()
+	cfg.Clusters["cluster-a"] = &clientcmdapi.Cluster{Server: "https://a.example.com"}
+	cfg.Clusters["cluster-b"] = &clientcmdapi.Cluster{Server: "https://b.example.com"}
+	cfg.AuthInfos["user-a"] = &clientcmdapi.AuthInfo{}
+	cfg.AuthInfos["user-b"] = &clientcmdapi.AuthInfo{}
+	cfg.Contexts["ctx-a"] = &clientcmdapi.Context{Cluster: "cluster-a", AuthInfo: "user-a"}
+	cfg.Contexts["ctx-b"] = &clientcmdapi.Context{Cluster: "cluster-b", AuthInfo: "user-b"}
+	bootstrapData = encodeKubeconfig(t, cfg)
+	t.Cleanup(func() { bootstrapData = "" })
+
+	_, _, err := resolveIncomingKubeconfig()
+	g.Expect(err).To(MatchError(ContainSubstring("no current-context")))
+}
+
+func TestResolveIncomingKubeconfig_DataBlobMissingClusterRef(t *testing.T) {
+	g := NewWithT(t)
+
+	// Context references a cluster that doesn't exist in the blob.
+	cfg := clientcmdapi.NewConfig()
+	cfg.Clusters["cluster-a"] = &clientcmdapi.Cluster{Server: "https://a.example.com"}
+	cfg.AuthInfos["user-a"] = &clientcmdapi.AuthInfo{}
+	cfg.Contexts["ctx-a"] = &clientcmdapi.Context{Cluster: "missing-cluster", AuthInfo: "user-a"}
+	cfg.CurrentContext = "ctx-a"
+	bootstrapData = encodeKubeconfig(t, cfg)
+	t.Cleanup(func() { bootstrapData = "" })
+
+	_, _, err := resolveIncomingKubeconfig()
+	g.Expect(err).To(MatchError(ContainSubstring("missing-cluster")))
 }
 
 func TestResolveIncomingKubeconfig_IndividualFlags(t *testing.T) {
