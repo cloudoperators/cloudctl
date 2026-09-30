@@ -358,14 +358,14 @@ func renameKubeconfigContext(cfg *clientcmdapi.Config, targetName string) {
 			}
 		}
 	}
-	if source == "" || source == targetName {
-		// Nothing to rename, but ensure CurrentContext points to the target.
+	if source == "" {
 		cfg.CurrentContext = targetName
 		return
 	}
 
 	ctx := cfg.Contexts[source]
 	if ctx == nil {
+		cfg.CurrentContext = targetName
 		return
 	}
 
@@ -380,7 +380,7 @@ func renameKubeconfigContext(cfg *clientcmdapi.Config, targetName string) {
 		}
 	}
 
-	// Rename cluster.
+	// Rename cluster (when it differs from the target name).
 	if cl, ok := cfg.Clusters[oldCluster]; ok && oldCluster != targetName {
 		cfg.Clusters[targetName] = cl
 		ctx.Cluster = targetName
@@ -397,7 +397,7 @@ func renameKubeconfigContext(cfg *clientcmdapi.Config, targetName string) {
 		}
 	}
 
-	// Rename authinfo.
+	// Rename authinfo (when it differs from the target name).
 	if ai, ok := cfg.AuthInfos[oldAuth]; ok && oldAuth != targetName {
 		cfg.AuthInfos[targetName] = ai
 		ctx.AuthInfo = targetName
@@ -406,9 +406,11 @@ func renameKubeconfigContext(cfg *clientcmdapi.Config, targetName string) {
 		}
 	}
 
-	// Rename context.
-	cfg.Contexts[targetName] = ctx
-	delete(cfg.Contexts, source)
+	// Rename context key when it differs; otherwise just update CurrentContext.
+	if source != targetName {
+		cfg.Contexts[targetName] = ctx
+		delete(cfg.Contexts, source)
+	}
 	cfg.CurrentContext = targetName
 }
 

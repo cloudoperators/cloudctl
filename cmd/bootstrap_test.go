@@ -309,6 +309,32 @@ func TestRenameKubeconfigContext_SharedClusterPreserved(t *testing.T) {
 	g.Expect(cfg.AuthInfos).To(HaveKey("gh-prod"))
 }
 
+func TestRenameKubeconfigContext_ContextKeyMatchesButEntriesDiffer(t *testing.T) {
+	g := NewWithT(t)
+
+	// The context key already equals targetName, but cluster/authinfo keys differ.
+	// renameKubeconfigContext must still rename the cluster and authinfo entries.
+	cfg := clientcmdapi.NewConfig()
+	cfg.Clusters["greenhouse-org-cluster"] = &clientcmdapi.Cluster{Server: "https://greenhouse.example.com"}
+	cfg.AuthInfos["greenhouse-org-user"] = &clientcmdapi.AuthInfo{}
+	cfg.Contexts["greenhouse-org"] = &clientcmdapi.Context{Cluster: "greenhouse-org-cluster", AuthInfo: "greenhouse-org-user"}
+	cfg.CurrentContext = "greenhouse-org"
+
+	renameKubeconfigContext(cfg, "greenhouse-org")
+
+	// Context key unchanged.
+	g.Expect(cfg.Contexts).To(HaveKey("greenhouse-org"))
+	g.Expect(cfg.CurrentContext).To(Equal("greenhouse-org"))
+	// Cluster and authinfo must be renamed to match the context name.
+	g.Expect(cfg.Clusters).To(HaveKey("greenhouse-org"))
+	g.Expect(cfg.Clusters).NotTo(HaveKey("greenhouse-org-cluster"))
+	g.Expect(cfg.AuthInfos).To(HaveKey("greenhouse-org"))
+	g.Expect(cfg.AuthInfos).NotTo(HaveKey("greenhouse-org-user"))
+	// The context's Cluster and AuthInfo fields must point to the new keys.
+	g.Expect(cfg.Contexts["greenhouse-org"].Cluster).To(Equal("greenhouse-org"))
+	g.Expect(cfg.Contexts["greenhouse-org"].AuthInfo).To(Equal("greenhouse-org"))
+}
+
 // ── mergeBootstrapKubeconfig ──────────────────────────────────────────────────
 
 func TestMergeBootstrapKubeconfig_AddsAllEntries(t *testing.T) {
