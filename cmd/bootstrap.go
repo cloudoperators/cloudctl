@@ -380,7 +380,7 @@ func renameKubeconfigContext(cfg *clientcmdapi.Config, targetName string) {
 	// Only delete the old cluster key if no other context (other than source) references it.
 	clusterRefCount := 0
 	for ctxName, c := range cfg.Contexts {
-		if ctxName != source && c.Cluster == oldCluster {
+		if ctxName != source && c != nil && c.Cluster == oldCluster {
 			clusterRefCount++
 		}
 	}
@@ -397,7 +397,7 @@ func renameKubeconfigContext(cfg *clientcmdapi.Config, targetName string) {
 	// Only delete the old authinfo key if no other context (other than source) references it.
 	authRefCount := 0
 	for ctxName, c := range cfg.Contexts {
-		if ctxName != source && c.AuthInfo == oldAuth {
+		if ctxName != source && c != nil && c.AuthInfo == oldAuth {
 			authRefCount++
 		}
 	}

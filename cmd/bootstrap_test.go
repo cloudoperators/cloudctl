@@ -335,6 +335,22 @@ func TestRenameKubeconfigContext_ContextKeyMatchesButEntriesDiffer(t *testing.T)
 	g.Expect(cfg.Contexts["greenhouse-org"].AuthInfo).To(Equal("greenhouse-org"))
 }
 
+func TestRenameKubeconfigContext_NilContextEntryDoesNotPanic(t *testing.T) {
+	// A multi-context blob where one context value is nil (e.g. decoded from a
+	// YAML null) must not panic when computing cluster/authinfo ref-counts.
+	cfg := clientcmdapi.NewConfig()
+	cfg.Clusters["greenhouse-org"] = &clientcmdapi.Cluster{Server: "https://greenhouse.example.com"}
+	cfg.AuthInfos["greenhouse-org"] = &clientcmdapi.AuthInfo{}
+	cfg.Contexts["greenhouse-org"] = &clientcmdapi.Context{Cluster: "greenhouse-org", AuthInfo: "greenhouse-org"}
+	cfg.Contexts["other-ctx"] = nil // nil entry simulating a null in the YAML
+	cfg.CurrentContext = "greenhouse-org"
+
+	g := NewWithT(t)
+	g.Expect(func() { renameKubeconfigContext(cfg, "gh-prod") }).NotTo(Panic())
+	g.Expect(cfg.Contexts).To(HaveKey("gh-prod"))
+	g.Expect(cfg.CurrentContext).To(Equal("gh-prod"))
+}
+
 // ── mergeBootstrapKubeconfig ──────────────────────────────────────────────────
 
 func TestMergeBootstrapKubeconfig_AddsAllEntries(t *testing.T) {
