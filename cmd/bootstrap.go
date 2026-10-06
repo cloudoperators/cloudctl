@@ -192,7 +192,9 @@ func runBootstrap(cmd *cobra.Command, args []string) error {
 	}
 
 	// Rename entries in the incoming config to use the chosen context name.
-	renameKubeconfigContext(incoming, contextName)
+	if err := renameKubeconfigContext(incoming, contextName); err != nil {
+		return err
+	}
 
 	// Load the config that will be mutated and written back (first file only).
 	// When KUBECONFIG contains multiple files we also build a merged view used
@@ -360,7 +362,9 @@ func buildOIDCKubeconfig(server, org, caDataB64, idpIssuerURL, clientID, clientS
 // in cfg to targetName. When there is exactly one context it is always the one renamed.
 // All other entries (multiple contexts in a blob) are left untouched.
 // Old cluster/authinfo keys are only removed when no other context still references them.
-func renameKubeconfigContext(cfg *clientcmdapi.Config, targetName string) {
+// Returns an error when targetName already names a different, unrelated entry in any of
+// the three maps, which would silently overwrite it.
+func renameKubeconfigContext(cfg *clientcmdapi.Config, targetName string) error {
 	// Identify which context to rename: prefer CurrentContext, fall back to the only one.
 	source := cfg.CurrentContext
 	if _, ok := cfg.Contexts[source]; !ok {
@@ -372,17 +376,30 @@ func renameKubeconfigContext(cfg *clientcmdapi.Config, targetName string) {
 	}
 	if source == "" {
 		cfg.CurrentContext = targetName
-		return
+		return nil
 	}
 
 	ctx := cfg.Contexts[source]
 	if ctx == nil {
 		cfg.CurrentContext = targetName
-		return
+		return nil
 	}
 
 	oldCluster := ctx.Cluster
 	oldAuth := ctx.AuthInfo
+
+	// Reject the rename when targetName is already used by an unrelated entry.
+	// "Unrelated" means: the key exists AND it is not the same entry we are about
+	// to rename (i.e. it is not oldCluster / oldAuth / source).
+	if _, exists := cfg.Clusters[targetName]; exists && targetName != oldCluster {
+		return fmt.Errorf("cannot rename to %q: a different cluster entry with that name already exists in the kubeconfig blob", targetName)
+	}
+	if _, exists := cfg.AuthInfos[targetName]; exists && targetName != oldAuth {
+		return fmt.Errorf("cannot rename to %q: a different user entry with that name already exists in the kubeconfig blob", targetName)
+	}
+	if _, exists := cfg.Contexts[targetName]; exists && targetName != source {
+		return fmt.Errorf("cannot rename to %q: a different context entry with that name already exists in the kubeconfig blob", targetName)
+	}
 
 	// Only delete the old cluster key if no other context (other than source) references it.
 	clusterRefCount := 0
@@ -424,6 +441,7 @@ func renameKubeconfigContext(cfg *clientcmdapi.Config, targetName string) {
 		delete(cfg.Contexts, source)
 	}
 	cfg.CurrentContext = targetName
+	return nil
 }
 
 // mergeBootstrapKubeconfig merges incoming into localConfig (the file that will

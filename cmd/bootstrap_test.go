@@ -230,7 +230,7 @@ func TestRenameKubeconfigContext_RenamesAll(t *testing.T) {
 	g := NewWithT(t)
 
 	cfg := realGreenhouseKubeconfig("sap-cna")
-	renameKubeconfigContext(cfg, "my-custom-name")
+	g.Expect(renameKubeconfigContext(cfg, "my-custom-name")).To(Succeed())
 
 	g.Expect(cfg.CurrentContext).To(Equal("my-custom-name"))
 	g.Expect(cfg.Contexts).To(HaveKey("my-custom-name"))
@@ -250,7 +250,7 @@ func TestRenameKubeconfigContext_NoOpWhenNameUnchanged(t *testing.T) {
 	g := NewWithT(t)
 
 	cfg := realGreenhouseKubeconfig("sap-cna")
-	renameKubeconfigContext(cfg, "greenhouse-sap-cna")
+	g.Expect(renameKubeconfigContext(cfg, "greenhouse-sap-cna")).To(Succeed())
 
 	g.Expect(cfg.CurrentContext).To(Equal("greenhouse-sap-cna"))
 	g.Expect(cfg.Contexts).To(HaveKey("greenhouse-sap-cna"))
@@ -271,7 +271,7 @@ func TestRenameKubeconfigContext_MultiContextBlobOnlyRenamesCurrent(t *testing.T
 	cfg.Contexts["ctx-b"] = &clientcmdapi.Context{Cluster: "cluster-b", AuthInfo: "user-b"}
 	cfg.CurrentContext = "ctx-a"
 
-	renameKubeconfigContext(cfg, "gh-prod")
+	g.Expect(renameKubeconfigContext(cfg, "gh-prod")).To(Succeed())
 
 	// ctx-a → gh-prod; ctx-b untouched
 	g.Expect(cfg.Contexts).To(HaveKey("gh-prod"))
@@ -296,7 +296,7 @@ func TestRenameKubeconfigContext_SharedClusterPreserved(t *testing.T) {
 	cfg.Contexts["ctx-b"] = &clientcmdapi.Context{Cluster: "shared-cluster", AuthInfo: "shared-user"}
 	cfg.CurrentContext = "ctx-a"
 
-	renameKubeconfigContext(cfg, "gh-prod")
+	g.Expect(renameKubeconfigContext(cfg, "gh-prod")).To(Succeed())
 
 	// The renamed context uses new keys.
 	g.Expect(cfg.Contexts).To(HaveKey("gh-prod"))
@@ -320,7 +320,7 @@ func TestRenameKubeconfigContext_ContextKeyMatchesButEntriesDiffer(t *testing.T)
 	cfg.Contexts["greenhouse-org"] = &clientcmdapi.Context{Cluster: "greenhouse-org-cluster", AuthInfo: "greenhouse-org-user"}
 	cfg.CurrentContext = "greenhouse-org"
 
-	renameKubeconfigContext(cfg, "greenhouse-org")
+	g.Expect(renameKubeconfigContext(cfg, "greenhouse-org")).To(Succeed())
 
 	// Context key unchanged.
 	g.Expect(cfg.Contexts).To(HaveKey("greenhouse-org"))
@@ -346,9 +346,31 @@ func TestRenameKubeconfigContext_NilContextEntryDoesNotPanic(t *testing.T) {
 	cfg.CurrentContext = "greenhouse-org"
 
 	g := NewWithT(t)
-	g.Expect(func() { renameKubeconfigContext(cfg, "gh-prod") }).NotTo(Panic())
+	g.Expect(func() { _ = renameKubeconfigContext(cfg, "gh-prod") }).NotTo(Panic())
 	g.Expect(cfg.Contexts).To(HaveKey("gh-prod"))
 	g.Expect(cfg.CurrentContext).To(Equal("gh-prod"))
+}
+
+func TestRenameKubeconfigContext_RejectsCollisionWithUnrelatedEntry(t *testing.T) {
+	g := NewWithT(t)
+
+	// A two-context blob: renaming ctx-a to "ctx-b" would clobber ctx-b's entries.
+	cfg := clientcmdapi.NewConfig()
+	cfg.Clusters["cluster-a"] = &clientcmdapi.Cluster{Server: "https://a.example.com"}
+	cfg.Clusters["ctx-b"] = &clientcmdapi.Cluster{Server: "https://b.example.com"}
+	cfg.AuthInfos["user-a"] = &clientcmdapi.AuthInfo{}
+	cfg.AuthInfos["ctx-b"] = &clientcmdapi.AuthInfo{}
+	cfg.Contexts["ctx-a"] = &clientcmdapi.Context{Cluster: "cluster-a", AuthInfo: "user-a"}
+	cfg.Contexts["ctx-b"] = &clientcmdapi.Context{Cluster: "ctx-b", AuthInfo: "ctx-b"}
+	cfg.CurrentContext = "ctx-a"
+
+	err := renameKubeconfigContext(cfg, "ctx-b")
+	g.Expect(err).To(HaveOccurred())
+	g.Expect(err.Error()).To(ContainSubstring("ctx-b"))
+	// Neither map was mutated.
+	g.Expect(cfg.Clusters).To(HaveKey("cluster-a"))
+	g.Expect(cfg.Contexts).To(HaveKey("ctx-a"))
+	g.Expect(cfg.CurrentContext).To(Equal("ctx-a"))
 }
 
 // ── mergeBootstrapKubeconfig ──────────────────────────────────────────────────
