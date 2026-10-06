@@ -132,9 +132,16 @@ func runBootstrap(cmd *cobra.Command, args []string) error {
 	}
 	bootstrapContextName = viper.GetString("context-name")
 	bootstrapSetCurrentCtx = viper.GetBool("set-current-context")
-	// Read dry-run directly from the flag to avoid viper cross-command pollution
-	// (sync also binds "dry-run" to the global viper instance).
-	bootstrapDryRun, _ = cmd.Flags().GetBool("dry-run")
+	// Read dry-run from the flag first to avoid viper cross-command pollution
+	// (sync also binds "dry-run" to the global viper instance). Fall back to
+	// viper.IsSet to honour CLOUDCTL_DRY_RUN and config-file values.
+	if cmd.Flags().Changed("dry-run") {
+		bootstrapDryRun, _ = cmd.Flags().GetBool("dry-run")
+	} else if viper.IsSet("dry-run") {
+		bootstrapDryRun = viper.GetBool("dry-run")
+	} else {
+		bootstrapDryRun = false
+	}
 
 	format, err := output.ParseFormat(viper.GetString("output"))
 	if err != nil {
