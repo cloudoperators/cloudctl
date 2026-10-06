@@ -111,9 +111,16 @@ func runBootstrap(cmd *cobra.Command, args []string) error {
 	bootstrapClientSecret = viper.GetString("greenhouse-client-secret")
 	bootstrapExtraScopes = viper.GetString("greenhouse-extra-scopes")
 	bootstrapNamespace = viper.GetString("greenhouse-namespace")
-	// Use the flag value directly; only fall back to KUBECONFIG/default when not explicitly set.
+	// Resolve the write target: prefer an explicitly-provided value from any
+	// configuration source (flag, CLOUDCTL_KUBECONFIG env var, or config file)
+	// before falling back to KUBECONFIG / home default.
+	// viper.IsSet covers env-var and config-file sources; cmd.Flags().Changed
+	// covers the --kubeconfig flag (Viper's pflag binding only works when
+	// BindPFlags runs after flag parsing, which is not guaranteed here).
 	if cmd.Flags().Changed("kubeconfig") {
 		bootstrapKubeconfig, _ = cmd.Flags().GetString("kubeconfig")
+	} else if viper.IsSet("kubeconfig") {
+		bootstrapKubeconfig = viper.GetString("kubeconfig")
 	} else if kc := os.Getenv("KUBECONFIG"); kc != "" {
 		if parts := strings.SplitN(kc, string(os.PathListSeparator), 2); len(parts) > 0 && parts[0] != "" {
 			bootstrapKubeconfig = parts[0]
@@ -169,7 +176,7 @@ func runBootstrap(cmd *cobra.Command, args []string) error {
 	}
 
 	// Prompt interactively for context name when running on a TTY and the flag wasn't set.
-	if !cmd.Flags().Changed("context-name") && output.IsTTYWriter(w) {
+	if !cmd.Flags().Changed("context-name") && !viper.IsSet("context-name") && output.IsTTYWriter(w) {
 		contextName, err = promptContextName(contextName)
 		if err != nil {
 			return err
@@ -177,7 +184,7 @@ func runBootstrap(cmd *cobra.Command, args []string) error {
 	}
 
 	setCurrentCtx := bootstrapSetCurrentCtx
-	if !cmd.Flags().Changed("set-current-context") && output.IsTTYWriter(w) {
+	if !cmd.Flags().Changed("set-current-context") && !viper.IsSet("set-current-context") && output.IsTTYWriter(w) {
 		setCurrentCtx, err = promptYesNo(fmt.Sprintf("Set %q as the current context?", contextName), false)
 		if err != nil {
 			return err
@@ -202,10 +209,10 @@ func runBootstrap(cmd *cobra.Command, args []string) error {
 		localConfig = clientcmdapi.NewConfig()
 	}
 
-	// When --kubeconfig was not explicitly set, also load the merged view of all
-	// KUBECONFIG files so we can detect collisions with entries in other files.
+	// When kubeconfig was not explicitly set (via flag, env var, or config file), also load
+	// the merged view of all KUBECONFIG files so we can detect collisions with entries in other files.
 	mergedView := localConfig
-	if !cmd.Flags().Changed("kubeconfig") {
+	if !cmd.Flags().Changed("kubeconfig") && !viper.IsSet("kubeconfig") {
 		mv, mvErr := clientcmd.NewDefaultClientConfigLoadingRules().Load()
 		if mvErr != nil {
 			return fmt.Errorf("failed to load kubeconfig: %w", mvErr)
