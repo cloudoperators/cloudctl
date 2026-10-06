@@ -138,19 +138,20 @@ func (p *interactivePrinter) Print(v any) error {
 		nothingNew := len(t.Added) == 0 && !t.CurrentContextUpdated
 		if nothingNew && len(t.Skipped) > 0 {
 			w("%s\n", styleFaint.Render("Bootstrap: nothing new to write — all entries already exist."))
-			break
 		}
 		if t.DryRun {
 			w("\n%s\n", styleFaint.Render("Bootstrap complete (dry-run). Run without --dry-run to apply."))
 			break
 		}
-		w("\n%s\n", styleGreen.Render("Bootstrap complete."))
-		if t.KubeconfigPath != "" {
-			w("  %s %s\n", styleFaint.Render("kubeconfig:"), t.KubeconfigPath)
-		}
-		w("  %s %s\n", styleFaint.Render("context:   "), styleBold.Render(t.ContextName))
-		if t.SetAsCurrent {
-			w("  %s\n", styleFaint.Render("set as current context."))
+		if !nothingNew {
+			w("\n%s\n", styleGreen.Render("Bootstrap complete."))
+			if t.KubeconfigPath != "" {
+				w("  %s %s\n", styleFaint.Render("kubeconfig:"), t.KubeconfigPath)
+			}
+			w("  %s %s\n", styleFaint.Render("context:   "), styleBold.Render(t.ContextName))
+			if t.SetAsCurrent {
+				w("  %s\n", styleFaint.Render("set as current context."))
+			}
 		}
 		org := t.Org
 		if org == "" {

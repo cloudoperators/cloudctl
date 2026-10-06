@@ -113,19 +113,20 @@ func (p *plainPrinter) Print(v any) error {
 		nothingNew := len(t.Added) == 0 && !t.CurrentContextUpdated
 		if nothingNew && len(t.Skipped) > 0 {
 			w("Bootstrap: nothing new to write — all entries already exist.\n")
-			break
 		}
 		if t.DryRun {
 			w("\nBootstrap complete (dry-run). Run without --dry-run to apply.\n")
 			break
 		}
-		w("\nBootstrap complete.\n")
-		if t.KubeconfigPath != "" {
-			w("  kubeconfig: %s\n", t.KubeconfigPath)
-		}
-		w("  context:    %s\n", t.ContextName)
-		if t.SetAsCurrent {
-			w("  set as current context.\n")
+		if !nothingNew {
+			w("\nBootstrap complete.\n")
+			if t.KubeconfigPath != "" {
+				w("  kubeconfig: %s\n", t.KubeconfigPath)
+			}
+			w("  context:    %s\n", t.ContextName)
+			if t.SetAsCurrent {
+				w("  set as current context.\n")
+			}
 		}
 		org := t.Org
 		if org == "" {

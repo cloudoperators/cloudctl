@@ -187,28 +187,31 @@ func runBootstrap(cmd *cobra.Command, args []string) error {
 	// Rename entries in the incoming config to use the chosen context name.
 	renameKubeconfigContext(incoming, contextName)
 
-	// Load or create the local kubeconfig. When --kubeconfig was not explicitly
-	// set, load through the default rules to honour KUBECONFIG env var and merge
-	// multiple files; still write only to bootstrapKubeconfig (first path).
+	// Load the config that will be mutated and written back (first file only).
+	// When KUBECONFIG contains multiple files we also build a merged view used
+	// solely for collision detection — we never write the merged object back so
+	// unmanaged entries in other files are not copied into the first file.
 	var localConfig *clientcmdapi.Config
-	if cmd.Flags().Changed("kubeconfig") {
-		if _, statErr := os.Stat(bootstrapKubeconfig); statErr == nil {
-			localConfig, err = clientcmd.LoadFromFile(bootstrapKubeconfig)
-			if err != nil {
-				return fmt.Errorf("failed to load local kubeconfig %q: %w", bootstrapKubeconfig, err)
-			}
-		}
-	} else {
-		localConfig, err = clientcmd.NewDefaultClientConfigLoadingRules().Load()
+	if _, statErr := os.Stat(bootstrapKubeconfig); statErr == nil {
+		localConfig, err = clientcmd.LoadFromFile(bootstrapKubeconfig)
 		if err != nil {
-			return fmt.Errorf("failed to load kubeconfig: %w", err)
+			return fmt.Errorf("failed to load local kubeconfig %q: %w", bootstrapKubeconfig, err)
 		}
 	}
 	if localConfig == nil {
 		localConfig = clientcmdapi.NewConfig()
 	}
 
-	result, err := mergeBootstrapKubeconfig(localConfig, incoming, contextName, setCurrentCtx, org)
+	// When --kubeconfig was not explicitly set, also load the merged view of all
+	// KUBECONFIG files so we can detect collisions with entries in other files.
+	mergedView := localConfig
+	if !cmd.Flags().Changed("kubeconfig") {
+		if mv, mvErr := clientcmd.NewDefaultClientConfigLoadingRules().Load(); mvErr == nil {
+			mergedView = mv
+		}
+	}
+
+	result, err := mergeBootstrapKubeconfig(localConfig, mergedView, incoming, contextName, setCurrentCtx, org)
 	if err != nil {
 		return err
 	}
@@ -414,11 +417,12 @@ func renameKubeconfigContext(cfg *clientcmdapi.Config, targetName string) {
 	cfg.CurrentContext = targetName
 }
 
-// mergeBootstrapKubeconfig merges the incoming config into localConfig.
-// Existing entries are never overwritten.
-// Cluster, authinfo, and context for a given name are treated as an atomic unit:
-// if the cluster already exists with a different server, all three are skipped together.
-func mergeBootstrapKubeconfig(localConfig, incoming *clientcmdapi.Config, ctxName string, setCurrentCtx bool, org string) (output.BootstrapResult, error) {
+// mergeBootstrapKubeconfig merges incoming into localConfig (the file that will
+// be written). collisionView is used for existence checks — when KUBECONFIG
+// spans multiple files it is the merged view of all of them, so we detect
+// collisions with entries in other files without copying those entries into the
+// first file.
+func mergeBootstrapKubeconfig(localConfig, collisionView, incoming *clientcmdapi.Config, ctxName string, setCurrentCtx bool, org string) (output.BootstrapResult, error) {
 	result := output.BootstrapResult{
 		ContextName:  ctxName,
 		SetAsCurrent: setCurrentCtx,
@@ -426,7 +430,7 @@ func mergeBootstrapKubeconfig(localConfig, incoming *clientcmdapi.Config, ctxNam
 	}
 
 	for name, cluster := range incoming.Clusters {
-		if _, exists := localConfig.Clusters[name]; !exists {
+		if _, exists := collisionView.Clusters[name]; !exists {
 			localConfig.Clusters[name] = cluster
 			result.Added = append(result.Added, fmt.Sprintf("cluster %q", name))
 		} else {
@@ -435,7 +439,7 @@ func mergeBootstrapKubeconfig(localConfig, incoming *clientcmdapi.Config, ctxNam
 	}
 
 	for name, auth := range incoming.AuthInfos {
-		if _, exists := localConfig.AuthInfos[name]; !exists {
+		if _, exists := collisionView.AuthInfos[name]; !exists {
 			localConfig.AuthInfos[name] = auth
 			result.Added = append(result.Added, fmt.Sprintf("user %q", name))
 		} else {
@@ -444,7 +448,7 @@ func mergeBootstrapKubeconfig(localConfig, incoming *clientcmdapi.Config, ctxNam
 	}
 
 	for name, ctx := range incoming.Contexts {
-		if _, exists := localConfig.Contexts[name]; !exists {
+		if _, exists := collisionView.Contexts[name]; !exists {
 			localConfig.Contexts[name] = ctx
 			result.Added = append(result.Added, fmt.Sprintf("context %q", name))
 		} else {

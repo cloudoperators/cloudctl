@@ -343,7 +343,7 @@ func TestMergeBootstrapKubeconfig_AddsAllEntries(t *testing.T) {
 	local := clientcmdapi.NewConfig()
 	incoming := realGreenhouseKubeconfig("sap-cna")
 
-	result, err := mergeBootstrapKubeconfig(local, incoming, "greenhouse-sap-cna", false, "sap-cna")
+	result, err := mergeBootstrapKubeconfig(local, local, incoming, "greenhouse-sap-cna", false, "sap-cna")
 	g.Expect(err).To(BeNil())
 
 	g.Expect(result.Added).To(HaveLen(3))
@@ -360,7 +360,7 @@ func TestMergeBootstrapKubeconfig_SetsCurrentContext(t *testing.T) {
 	local := clientcmdapi.NewConfig()
 	incoming := realGreenhouseKubeconfig("sap-cna")
 
-	result, err := mergeBootstrapKubeconfig(local, incoming, "greenhouse-sap-cna", true, "sap-cna")
+	result, err := mergeBootstrapKubeconfig(local, local, incoming, "greenhouse-sap-cna", true, "sap-cna")
 	g.Expect(err).To(BeNil())
 	g.Expect(local.CurrentContext).To(Equal("greenhouse-sap-cna"))
 	g.Expect(result.CurrentContextUpdated).To(BeTrue())
@@ -372,7 +372,7 @@ func TestMergeBootstrapKubeconfig_IdempotentSkipsExisting(t *testing.T) {
 	incoming := realGreenhouseKubeconfig("sap-cna")
 	local := realGreenhouseKubeconfig("sap-cna") // same entries already present
 
-	result, err := mergeBootstrapKubeconfig(local, incoming, "greenhouse-sap-cna", false, "sap-cna")
+	result, err := mergeBootstrapKubeconfig(local, local, incoming, "greenhouse-sap-cna", false, "sap-cna")
 	g.Expect(err).To(BeNil())
 	g.Expect(result.Added).To(BeEmpty())
 	g.Expect(result.Skipped).To(HaveLen(3))
@@ -386,7 +386,7 @@ func TestMergeBootstrapKubeconfig_NeverOverwritesExistingEntries(t *testing.T) {
 	local.Clusters["greenhouse-sap-cna"] = &clientcmdapi.Cluster{Server: "https://original.example.com"}
 
 	incoming := realGreenhouseKubeconfig("sap-cna")
-	_, err := mergeBootstrapKubeconfig(local, incoming, "greenhouse-sap-cna", false, "sap-cna")
+	_, err := mergeBootstrapKubeconfig(local, local, incoming, "greenhouse-sap-cna", false, "sap-cna")
 	g.Expect(err).To(BeNil())
 
 	// Original server must not be overwritten.
@@ -404,7 +404,7 @@ func TestMergeBootstrapKubeconfig_PreservesExistingLocalEntries(t *testing.T) {
 	local.CurrentContext = "other-ctx"
 
 	incoming := realGreenhouseKubeconfig("sap-cna")
-	_, err := mergeBootstrapKubeconfig(local, incoming, "greenhouse-sap-cna", false, "sap-cna")
+	_, err := mergeBootstrapKubeconfig(local, local, incoming, "greenhouse-sap-cna", false, "sap-cna")
 	g.Expect(err).To(BeNil())
 
 	// Unrelated entries must still be there.
