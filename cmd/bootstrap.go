@@ -206,9 +206,11 @@ func runBootstrap(cmd *cobra.Command, args []string) error {
 	// KUBECONFIG files so we can detect collisions with entries in other files.
 	mergedView := localConfig
 	if !cmd.Flags().Changed("kubeconfig") {
-		if mv, mvErr := clientcmd.NewDefaultClientConfigLoadingRules().Load(); mvErr == nil {
-			mergedView = mv
+		mv, mvErr := clientcmd.NewDefaultClientConfigLoadingRules().Load()
+		if mvErr != nil {
+			return fmt.Errorf("failed to load kubeconfig: %w", mvErr)
 		}
+		mergedView = mv
 	}
 
 	result, err := mergeBootstrapKubeconfig(localConfig, mergedView, incoming, contextName, setCurrentCtx, org)
