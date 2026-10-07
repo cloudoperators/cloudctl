@@ -100,6 +100,41 @@ func (p *plainPrinter) Print(v any) error {
 			w("cloudctl update status: %s (current: %s, latest: %s)\n", t.Status, t.CurrentVersion, t.LatestVersion)
 		}
 
+	case BootstrapResult:
+		if t.DryRun {
+			w("Dry-run: no changes will be written.\n\n")
+		}
+		for _, entry := range t.Added {
+			w("  [+] %s\n", entry)
+		}
+		for _, entry := range t.Skipped {
+			w("  [=] %s\n", entry)
+		}
+		nothingNew := len(t.Added) == 0 && !t.CurrentContextUpdated
+		if nothingNew && len(t.Skipped) > 0 {
+			w("Bootstrap: nothing new to write — all entries already exist.\n")
+		}
+		if t.DryRun {
+			w("\nBootstrap complete (dry-run). Run without --dry-run to apply.\n")
+			break
+		}
+		if !nothingNew {
+			w("\nBootstrap complete.\n")
+			if t.KubeconfigPath != "" {
+				w("  kubeconfig: %s\n", t.KubeconfigPath)
+			}
+			w("  context:    %s\n", t.ContextName)
+			if t.SetAsCurrent {
+				w("  set as current context.\n")
+			}
+		}
+		org := t.Org
+		if org == "" {
+			// Extract org from context name "greenhouse-<org>".
+			org = strings.TrimPrefix(t.ContextName, "greenhouse-")
+		}
+		w("\nRun `cloudctl sync -n %s` to pull in your cluster access.\n", org)
+
 	default:
 		w("%v\n", v)
 	}

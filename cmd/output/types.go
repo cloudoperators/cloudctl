@@ -99,3 +99,15 @@ type FieldChange struct {
 	Old   string `json:"old"   yaml:"old"`
 	New   string `json:"new"   yaml:"new"`
 }
+
+// BootstrapResult is the output of the bootstrap command.
+type BootstrapResult struct {
+	ContextName           string   `json:"contextName"                      yaml:"contextName"`
+	SetAsCurrent          bool     `json:"setAsCurrent"                     yaml:"setAsCurrent"`
+	CurrentContextUpdated bool     `json:"currentContextUpdated,omitzero"   yaml:"currentContextUpdated,omitempty"`
+	Added                 []string `json:"added,omitzero"                   yaml:"added,omitempty"`
+	Skipped               []string `json:"skipped,omitzero"                 yaml:"skipped,omitempty"`
+	KubeconfigPath        string   `json:"kubeconfigPath,omitempty"         yaml:"kubeconfigPath,omitempty"`
+	DryRun                bool     `json:"dryRun,omitzero"                  yaml:"dryRun,omitempty"`
+	Org                   string   `json:"org,omitempty"                    yaml:"org,omitempty"`
+}
