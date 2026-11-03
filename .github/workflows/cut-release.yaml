@@ -21,4 +21,4 @@ jobs:
       bump: ${{ inputs.bump }}
       makefile-path: Makefile
     secrets:
-      release-token: ${{ secrets.GITHUB_TOKEN }}
+      release-token: ${{ secrets.RELEASE_GH_TOKEN }}
