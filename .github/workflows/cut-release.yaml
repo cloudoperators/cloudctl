@@ -13,10 +13,13 @@ on:
           - major
 
 jobs:
-  generate-token:
+  cut-release:
     runs-on: ubuntu-latest
-    outputs:
-      token: ${{ steps.app-token.outputs.token }}
+    concurrency:
+      group: release-${{ github.repository }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
     steps:
       - name: Generate GitHub App token
         id: app-token
@@ -25,13 +28,63 @@ jobs:
           app-id: ${{ secrets.CLOUDOPERATOR_APP_ID }}
           private-key: ${{ secrets.CLOUDOPERATOR_APP_PRIVATE_KEY }}
 
-  cut-release:
-    needs: generate-token
-    uses: cloudoperators/common/.github/workflows/shared-release.yaml@4a36aa4e13e96d49b6d17f29da005f6cdb42b15b
-    permissions:
-      contents: write
-    with:
-      bump: ${{ inputs.bump }}
-      makefile-path: Makefile
-    secrets:
-      release-token: ${{ needs.generate-token.outputs.token }}
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+
+      - name: Compute new version
+        id: version
+        env:
+          BUMP: ${{ inputs.bump }}
+        run: |
+          CURRENT_VERSION=$(grep -E '^VERSION[[:space:]]*[:?]?=' Makefile | head -1 | sed 's/.*=[[:space:]]*//' | tr -d '[:space:]')
+          echo "Current version: $CURRENT_VERSION"
+
+          MAJOR=$(echo "$CURRENT_VERSION" | cut -d. -f1)
+          MINOR=$(echo "$CURRENT_VERSION" | cut -d. -f2)
+          PATCH=$(echo "$CURRENT_VERSION" | cut -d. -f3)
+
+          case "$BUMP" in
+            major) MAJOR=$((MAJOR+1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR+1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH+1)) ;;
+          esac
+
+          NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          echo "New version: $NEW_VERSION"
+          echo "new=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Update Makefile VERSION
+        env:
+          NEW_VERSION: ${{ steps.version.outputs.new }}
+        run: |
+          sed -i -E "s/^(VERSION[[:space:]]*[:?]?=)[[:space:]]*.*/\1 ${NEW_VERSION}/" Makefile
+
+      - name: Commit version bump and tag
+        env:
+          NEW_VERSION: ${{ steps.version.outputs.new }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Makefile
+          git commit -m "chore: bump version to ${NEW_VERSION}"
+          git tag -a "v${NEW_VERSION}" -m "Release v${NEW_VERSION}"
+          git push origin ${{ github.event.repository.default_branch }} --follow-tags
+
+      - name: Create GitHub release
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: 'v${{ steps.version.outputs.new }}',
+              name: 'v${{ steps.version.outputs.new }}',
+              generate_release_notes: true,
+              draft: false,
+              prerelease: false
+            });
