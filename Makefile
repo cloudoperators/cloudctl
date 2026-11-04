@@ -5,7 +5,7 @@ CMD_PKG       ?= .
 BUILD_DIR     ?= bin
 
 # Versioning (overridable)
-VERSION       ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+VERSION       ?= 2.0.1
 GIT_COMMIT    ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 BUILD_DATE    ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 
