@@ -13,7 +13,20 @@ on:
           - major
 
 jobs:
+  generate-token:
+    runs-on: ubuntu-latest
+    outputs:
+      token: ${{ steps.app-token.outputs.token }}
+    steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          app-id: ${{ secrets.CLOUDOPERATOR_APP_ID }}
+          private-key: ${{ secrets.CLOUDOPERATOR_APP_PRIVATE_KEY }}
+
   cut-release:
+    needs: generate-token
     uses: cloudoperators/common/.github/workflows/shared-release.yaml@4a36aa4e13e96d49b6d17f29da005f6cdb42b15b
     permissions:
       contents: write
@@ -21,4 +34,4 @@ jobs:
       bump: ${{ inputs.bump }}
       makefile-path: Makefile
     secrets:
-      release-token: ${{ secrets.RELEASE_GH_TOKEN }}
+      release-token: ${{ needs.generate-token.outputs.token }}
