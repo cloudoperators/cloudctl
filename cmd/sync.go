@@ -42,6 +42,7 @@ var (
 	kubeloginExtraArgs          []string
 	kubeloginTokenCacheDir      string
 	dryRun                      bool
+	includeNotReady             bool
 )
 
 func init() {
@@ -74,6 +75,7 @@ func init() {
 	syncCmd.Flags().StringVar(&kubeloginTokenCacheDir, "kubelogin-token-cache-dir", defaultTokenCacheDir, "Directory for OIDC token cache files")
 
 	syncCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview changes without writing to the kubeconfig file")
+	syncCmd.Flags().BoolVar(&includeNotReady, "include-not-ready", false, "Also merge clusters whose Ready condition is False (spec data must be present)")
 
 	// BindPFlags can theoretically return an error if called with `nil` as an argument
 	// which should never happen after at least one flag was defined. That's why the output
@@ -87,9 +89,13 @@ var syncCmd = &cobra.Command{
 	Long: `Fetches ClusterKubeconfig resources from a Greenhouse cluster and merges
 them into your local kubeconfig file.
 
-Only clusters whose Ready condition is True are merged. Clusters that have
-been removed from Greenhouse are cleaned up from your local config. Existing
-non-managed entries are never touched.
+Only clusters whose Ready condition is True are merged by default. Clusters
+whose Ready condition is False are preserved in the local kubeconfig so they
+remain reachable (e.g. to investigate or recover the cluster). Use
+--include-not-ready to also merge their spec data.
+
+Clusters that have been removed from Greenhouse are cleaned up from your
+local config. Existing non-managed entries are never touched.
 
 OIDC credentials are preserved across syncs: id-token and refresh-token are
 carried forward so you do not need to re-authenticate after every sync.
@@ -223,9 +229,25 @@ func runSync(cmd *cobra.Command, args []string) error {
 		localConfig = clientcmdapi.NewConfig()
 	}
 
-	serverConfig, err := buildIncomingKubeconfig(ready)
+	toMerge := ready
+	if includeNotReady {
+		toMerge = append(toMerge, notReady...)
+	}
+
+	serverConfig, err := buildIncomingKubeconfig(toMerge)
 	if err != nil {
 		return fmt.Errorf("failed to create server config: %w", err)
+	}
+
+	// Preserve notReady cluster entries that already exist in the local kubeconfig.
+	// A cluster whose Ready condition is transiently false (e.g. controller bug, rolling
+	// upgrade) must not be wiped from the local kubeconfig — the user may need it to
+	// reach and fix the cluster. We inject stub entries into serverConfig so the stale-
+	// cleanup pass in mergeKubeconfig treats them as still-present on the server side.
+	// The stubs only affect deletion logic; they are never written to disk.
+	// When --include-not-ready is set, notReady entries are fully merged instead.
+	if !includeNotReady {
+		injectNotReadyStubs(serverConfig, notReady, localConfig)
 	}
 
 	// Take a snapshot before merge for dry-run diff — only needed when --dry-run is set.
@@ -283,6 +305,46 @@ func partitionReady(items []v1alpha1.ClusterKubeconfig) (ready, notReady []v1alp
 func filterReady(items []v1alpha1.ClusterKubeconfig) []v1alpha1.ClusterKubeconfig {
 	ready, _ := partitionReady(items)
 	return ready
+}
+
+// injectNotReadyStubs adds stub entries into serverConfig for each notReady ClusterKubeconfig
+// that already has a corresponding managed entry in localConfig. This prevents mergeKubeconfig's
+// stale-cleanup pass from deleting local entries for clusters that are temporarily not-ready —
+// the user needs those entries to reach and recover the cluster.
+// Stubs are derived from the existing local entries (no spec data required) and are never written to disk.
+func injectNotReadyStubs(serverConfig *clientcmdapi.Config, notReady []v1alpha1.ClusterKubeconfig, localConfig *clientcmdapi.Config) {
+	for _, ckc := range notReady {
+		// Look for any local managed context whose name matches this CKC, then copy its
+		// referenced cluster/authinfo names into serverConfig so cleanup skips them.
+		for ctxName, localCtx := range localConfig.Contexts {
+			if localCtx == nil {
+				continue
+			}
+			// Context name matches the CKC name (contexts are not prefixed).
+			if ctxName != ckc.Name {
+				continue
+			}
+			// Inject stub context.
+			if _, exists := serverConfig.Contexts[ctxName]; !exists {
+				serverConfig.Contexts[ctxName] = localCtx.DeepCopy()
+			}
+			// Inject stub cluster (keyed by the unprefixed name that mergeKubeconfig looks up).
+			clusterName := unmanagedNameFunc(localCtx.Cluster)
+			if _, exists := serverConfig.Clusters[clusterName]; !exists {
+				if src, ok := localConfig.Clusters[localCtx.Cluster]; ok {
+					serverConfig.Clusters[clusterName] = src.DeepCopy()
+				}
+			}
+			// Inject stub authinfo.
+			authName := unmanagedNameFunc(localCtx.AuthInfo)
+			if _, exists := serverConfig.AuthInfos[authName]; !exists {
+				if src, ok := localConfig.AuthInfos[localCtx.AuthInfo]; ok {
+					serverConfig.AuthInfos[authName] = src.DeepCopy()
+				}
+			}
+			break
+		}
+	}
 }
 
 // buildSyncResult constructs an output.SyncResult from ready and notReady cluster lists.

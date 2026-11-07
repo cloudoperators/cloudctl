@@ -1055,3 +1055,97 @@ func TestWriteTargetFromKUBECONFIG(t *testing.T) {
 		})
 	}
 }
+
+func TestInjectNotReadyStubs_PreservesLocalEntries(t *testing.T) {
+	g := NewWithT(t)
+
+	orig := prefix
+	prefix = "cloudctl"
+	defer func() { prefix = orig }()
+
+	notReadyCkc := greenhousev1alpha1.ClusterKubeconfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "broken-cluster"},
+	}
+
+	// Local kubeconfig already has a managed entry for broken-cluster.
+	localConfig := clientcmdapi.NewConfig()
+	localConfig.Clusters["cloudctl:broken-cluster"] = &clientcmdapi.Cluster{Server: "https://broken.example.com"}
+	localConfig.AuthInfos["cloudctl:oidc@broken-cluster"] = &clientcmdapi.AuthInfo{}
+	localConfig.Contexts["broken-cluster"] = &clientcmdapi.Context{
+		Cluster:  "cloudctl:broken-cluster",
+		AuthInfo: "cloudctl:oidc@broken-cluster",
+	}
+
+	serverConfig := clientcmdapi.NewConfig()
+
+	injectNotReadyStubs(serverConfig, []greenhousev1alpha1.ClusterKubeconfig{notReadyCkc}, localConfig)
+
+	// Stubs must be present so mergeKubeconfig's stale-cleanup does not delete them.
+	g.Expect(serverConfig.Contexts).To(HaveKey("broken-cluster"))
+	g.Expect(serverConfig.Clusters).To(HaveKey("broken-cluster"))
+	g.Expect(serverConfig.AuthInfos).To(HaveKey("oidc@broken-cluster"))
+}
+
+func TestInjectNotReadyStubs_SkipsUnknownClusters(t *testing.T) {
+	g := NewWithT(t)
+
+	orig := prefix
+	prefix = "cloudctl"
+	defer func() { prefix = orig }()
+
+	// notReady cluster has no corresponding local entry.
+	notReadyCkc := greenhousev1alpha1.ClusterKubeconfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "new-cluster"},
+	}
+
+	serverConfig := clientcmdapi.NewConfig()
+	localConfig := clientcmdapi.NewConfig()
+
+	injectNotReadyStubs(serverConfig, []greenhousev1alpha1.ClusterKubeconfig{notReadyCkc}, localConfig)
+
+	// Nothing added — no local entry to preserve.
+	g.Expect(serverConfig.Contexts).To(BeEmpty())
+	g.Expect(serverConfig.Clusters).To(BeEmpty())
+	g.Expect(serverConfig.AuthInfos).To(BeEmpty())
+}
+
+func TestIncludeNotReady_MergesSpecData(t *testing.T) {
+	g := NewWithT(t)
+
+	orig := includeNotReady
+	includeNotReady = true
+	defer func() { includeNotReady = orig }()
+
+	notReadyCkc := greenhousev1alpha1.ClusterKubeconfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "notready-cluster"},
+	}
+	notReadyCkc.Status.Conditions.SetConditions(
+		greenhousemetav1alpha1.FalseCondition(
+			greenhousemetav1alpha1.ReadyCondition,
+			"KubeconfigMissing",
+			"secret data key greenhousekubeconfig missing or empty",
+		),
+	)
+	notReadyCkc.Spec.Kubeconfig.Clusters = append(notReadyCkc.Spec.Kubeconfig.Clusters,
+		greenhousev1alpha1.ClusterKubeconfigClusterItem{
+			Name: "notready-cluster",
+			Cluster: greenhousev1alpha1.ClusterKubeconfigCluster{
+				Server: "https://notready.example.com",
+			},
+		},
+	)
+
+	ready, notReady := partitionReady([]greenhousev1alpha1.ClusterKubeconfig{notReadyCkc})
+	g.Expect(ready).To(BeEmpty())
+	g.Expect(notReady).To(HaveLen(1))
+
+	// With includeNotReady=true, notReady entries are appended to the merge set.
+	toMerge := ready
+	if includeNotReady {
+		toMerge = append(toMerge, notReady...)
+	}
+	serverConfig, err := buildIncomingKubeconfig(toMerge)
+	g.Expect(err).ToNot(HaveOccurred())
+	g.Expect(serverConfig.Clusters).To(HaveKey("notready-cluster"))
+	g.Expect(serverConfig.Clusters["notready-cluster"].Server).To(Equal("https://notready.example.com"))
+}
