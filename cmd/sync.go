@@ -212,7 +212,7 @@ func runSync(cmd *cobra.Command, args []string) error {
 
 	ready, notReady := partitionReady(allKubeconfigs)
 
-	if len(ready) == 0 && !(includeNotReady && len(notReady) > 0) {
+	if len(ready) == 0 && (!includeNotReady || len(notReady) == 0) {
 		return printer.Print(buildSyncResult(nil, notReady))
 	}
 	var localConfig *clientcmdapi.Config

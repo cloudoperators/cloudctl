@@ -1236,9 +1236,9 @@ func TestIncludeNotReady_BypassesEarlyReturnWhenAllNotReady(t *testing.T) {
 	// Simulate the early-return condition in runSync:
 	// without --include-not-ready, len(ready)==0 returns early.
 	// with --include-not-ready and len(notReady)>0, execution continues.
-	shouldContinue := func(inclNotReady bool) bool {
-		return !(len(ready) == 0 && !(inclNotReady && len(notReady) > 0))
+	earlyReturn := func(inclNotReady bool) bool {
+		return len(ready) == 0 && (!inclNotReady || len(notReady) == 0)
 	}
-	g.Expect(shouldContinue(false)).To(BeFalse(), "without flag: must return early")
-	g.Expect(shouldContinue(true)).To(BeTrue(), "with flag: must continue past early return")
+	g.Expect(earlyReturn(false)).To(BeTrue(), "without flag: must return early")
+	g.Expect(earlyReturn(true)).To(BeFalse(), "with flag: must continue past early return")
 }
