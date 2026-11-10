@@ -141,6 +141,7 @@ func runSync(cmd *cobra.Command, args []string) error {
 	kubeloginExtraArgs = viper.GetStringSlice("kubelogin-extra-args")
 	kubeloginTokenCacheDir = viper.GetString("kubelogin-token-cache-dir")
 	dryRun = viper.GetBool("dry-run")
+	includeNotReady = viper.GetBool("include-not-ready")
 
 	format, err := output.ParseFormat(viper.GetString("output"))
 	if err != nil {
@@ -211,10 +212,9 @@ func runSync(cmd *cobra.Command, args []string) error {
 
 	ready, notReady := partitionReady(allKubeconfigs)
 
-	if len(ready) == 0 {
+	if len(ready) == 0 && !(includeNotReady && len(notReady) > 0) {
 		return printer.Print(buildSyncResult(nil, notReady))
 	}
-
 	var localConfig *clientcmdapi.Config
 	if remoteClusterKubeconfig != "" {
 		localConfig, err = clientcmd.LoadFromFile(remoteClusterKubeconfig)
@@ -229,12 +229,17 @@ func runSync(cmd *cobra.Command, args []string) error {
 		localConfig = clientcmdapi.NewConfig()
 	}
 
-	toMerge := ready
+	// merged = ready + notReady entries that were opted into full merge.
+	// skipped = notReady entries that were NOT merged (preserved in place or absent).
+	merged := ready
+	var skipped []v1alpha1.ClusterKubeconfig
 	if includeNotReady {
-		toMerge = append(toMerge, notReady...)
+		merged = append(merged, notReady...)
+	} else {
+		skipped = notReady
 	}
 
-	serverConfig, err := buildIncomingKubeconfig(toMerge)
+	serverConfig, err := buildIncomingKubeconfig(merged)
 	if err != nil {
 		return fmt.Errorf("failed to create server config: %w", err)
 	}
@@ -264,7 +269,7 @@ func runSync(cmd *cobra.Command, args []string) error {
 	err = mergeKubeconfig(localConfig, serverConfig)
 	stopMerge()
 	if err != nil {
-		_ = printer.Print(buildFailedSyncResult(ready, notReady, err))
+		_ = printer.Print(buildFailedSyncResult(merged, skipped, err))
 		return fmt.Errorf(`failed to merge ClusterKubeconfig: %w`, err)
 	}
 
@@ -279,11 +284,11 @@ func runSync(cmd *cobra.Command, args []string) error {
 	}
 
 	if writeErr := writeConfig(localConfig, writeTarget); writeErr != nil {
-		_ = printer.Print(buildFailedSyncResult(ready, notReady, writeErr))
+		_ = printer.Print(buildFailedSyncResult(merged, skipped, writeErr))
 		return fmt.Errorf("failed to write merged kubeconfig: %w", writeErr)
 	}
 
-	return printer.Print(buildSyncResult(ready, notReady))
+	return printer.Print(buildSyncResult(merged, skipped))
 }
 
 // partitionReady splits ClusterKubeconfigs into ready and notReady slices.
@@ -314,35 +319,54 @@ func filterReady(items []v1alpha1.ClusterKubeconfig) []v1alpha1.ClusterKubeconfi
 // Stubs are derived from the existing local entries (no spec data required) and are never written to disk.
 func injectNotReadyStubs(serverConfig *clientcmdapi.Config, notReady []v1alpha1.ClusterKubeconfig, localConfig *clientcmdapi.Config) {
 	for _, ckc := range notReady {
-		// Look for any local managed context whose name matches this CKC, then copy its
-		// referenced cluster/authinfo names into serverConfig so cleanup skips them.
-		for ctxName, localCtx := range localConfig.Contexts {
-			if localCtx == nil {
+		// Collect the set of context names this CKC owns: prefer spec context names when
+		// available (spec may be populated even if Ready=False), fall back to the resource
+		// name so we still protect entries written by an older sync.
+		ctxNames := make([]string, 0, len(ckc.Spec.Kubeconfig.Contexts)+1)
+		for _, ctxItem := range ckc.Spec.Kubeconfig.Contexts {
+			ctxNames = append(ctxNames, ctxItem.Name)
+		}
+		if len(ctxNames) == 0 {
+			ctxNames = append(ctxNames, ckc.Name)
+		}
+
+		for _, ctxName := range ctxNames {
+			localCtx, ok := localConfig.Contexts[ctxName]
+			if !ok || localCtx == nil {
 				continue
 			}
-			// Context name matches the CKC name (contexts are not prefixed).
-			if ctxName != ckc.Name {
+			// Fix 6: skip unmanaged contexts — only protect entries cloudctl wrote.
+			if !isManaged(localCtx.Cluster) {
 				continue
 			}
-			// Inject stub context.
+
+			// Fix 2: stub context must carry unprefixed cluster/authinfo references so
+			// mergeKubeconfig's lookup (which strips the prefix before checking serverConfig)
+			// resolves correctly and does not produce double-prefixed names.
+			stubCtx := &clientcmdapi.Context{
+				Cluster:   unmanagedNameFunc(localCtx.Cluster),
+				AuthInfo:  unmanagedNameFunc(localCtx.AuthInfo),
+				Namespace: localCtx.Namespace,
+			}
 			if _, exists := serverConfig.Contexts[ctxName]; !exists {
-				serverConfig.Contexts[ctxName] = localCtx.DeepCopy()
+				serverConfig.Contexts[ctxName] = stubCtx
 			}
-			// Inject stub cluster (keyed by the unprefixed name that mergeKubeconfig looks up).
+
+			// Inject stub cluster keyed by the unprefixed name.
 			clusterName := unmanagedNameFunc(localCtx.Cluster)
 			if _, exists := serverConfig.Clusters[clusterName]; !exists {
 				if src, ok := localConfig.Clusters[localCtx.Cluster]; ok {
 					serverConfig.Clusters[clusterName] = src.DeepCopy()
 				}
 			}
-			// Inject stub authinfo.
+
+			// Inject stub authinfo keyed by the unprefixed name.
 			authName := unmanagedNameFunc(localCtx.AuthInfo)
 			if _, exists := serverConfig.AuthInfos[authName]; !exists {
 				if src, ok := localConfig.AuthInfos[localCtx.AuthInfo]; ok {
 					serverConfig.AuthInfos[authName] = src.DeepCopy()
 				}
 			}
-			break
 		}
 	}
 }

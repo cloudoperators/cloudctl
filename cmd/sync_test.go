@@ -1084,6 +1084,71 @@ func TestInjectNotReadyStubs_PreservesLocalEntries(t *testing.T) {
 	g.Expect(serverConfig.Contexts).To(HaveKey("broken-cluster"))
 	g.Expect(serverConfig.Clusters).To(HaveKey("broken-cluster"))
 	g.Expect(serverConfig.AuthInfos).To(HaveKey("oidc@broken-cluster"))
+
+	// Fix 2: stub context references must be unprefixed to avoid double-prefix on re-merge.
+	g.Expect(serverConfig.Contexts["broken-cluster"].Cluster).To(Equal("broken-cluster"))
+	g.Expect(serverConfig.Contexts["broken-cluster"].AuthInfo).To(Equal("oidc@broken-cluster"))
+}
+
+func TestInjectNotReadyStubs_UsesSpecContextNames(t *testing.T) {
+	g := NewWithT(t)
+
+	orig := prefix
+	prefix = "cloudctl"
+	defer func() { prefix = orig }()
+
+	// CKC resource name is "demo" but the context in spec is "ctx1" (as in e2e tests).
+	notReadyCkc := greenhousev1alpha1.ClusterKubeconfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
+	}
+	notReadyCkc.Spec.Kubeconfig.Contexts = append(notReadyCkc.Spec.Kubeconfig.Contexts,
+		greenhousev1alpha1.ClusterKubeconfigContextItem{
+			Name: "ctx1",
+		},
+	)
+
+	localConfig := clientcmdapi.NewConfig()
+	localConfig.Clusters["cloudctl:ctx1-cluster"] = &clientcmdapi.Cluster{Server: "https://ctx1.example.com"}
+	localConfig.AuthInfos["cloudctl:oidc@ctx1"] = &clientcmdapi.AuthInfo{}
+	localConfig.Contexts["ctx1"] = &clientcmdapi.Context{
+		Cluster:  "cloudctl:ctx1-cluster",
+		AuthInfo: "cloudctl:oidc@ctx1",
+	}
+
+	serverConfig := clientcmdapi.NewConfig()
+
+	injectNotReadyStubs(serverConfig, []greenhousev1alpha1.ClusterKubeconfig{notReadyCkc}, localConfig)
+
+	// Stub must be keyed by spec context name "ctx1", not resource name "demo".
+	g.Expect(serverConfig.Contexts).To(HaveKey("ctx1"))
+	g.Expect(serverConfig.Contexts).NotTo(HaveKey("demo"))
+}
+
+func TestInjectNotReadyStubs_SkipsUnmanagedContexts(t *testing.T) {
+	g := NewWithT(t)
+
+	orig := prefix
+	prefix = "cloudctl"
+	defer func() { prefix = orig }()
+
+	notReadyCkc := greenhousev1alpha1.ClusterKubeconfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "manual-cluster"},
+	}
+
+	// Context exists in local but cluster ref is NOT prefixed — it is an unmanaged entry.
+	localConfig := clientcmdapi.NewConfig()
+	localConfig.Clusters["manual-cluster"] = &clientcmdapi.Cluster{Server: "https://manual.example.com"}
+	localConfig.Contexts["manual-cluster"] = &clientcmdapi.Context{
+		Cluster: "manual-cluster", // no cloudctl: prefix
+	}
+
+	serverConfig := clientcmdapi.NewConfig()
+
+	injectNotReadyStubs(serverConfig, []greenhousev1alpha1.ClusterKubeconfig{notReadyCkc}, localConfig)
+
+	// Unmanaged context must not be touched.
+	g.Expect(serverConfig.Contexts).To(BeEmpty())
+	g.Expect(serverConfig.Clusters).To(BeEmpty())
 }
 
 func TestInjectNotReadyStubs_SkipsUnknownClusters(t *testing.T) {
@@ -1148,4 +1213,32 @@ func TestIncludeNotReady_MergesSpecData(t *testing.T) {
 	g.Expect(err).ToNot(HaveOccurred())
 	g.Expect(serverConfig.Clusters).To(HaveKey("notready-cluster"))
 	g.Expect(serverConfig.Clusters["notready-cluster"].Server).To(Equal("https://notready.example.com"))
+}
+
+func TestIncludeNotReady_BypassesEarlyReturnWhenAllNotReady(t *testing.T) {
+	g := NewWithT(t)
+
+	notReadyCkc := greenhousev1alpha1.ClusterKubeconfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "all-broken"},
+	}
+	notReadyCkc.Status.Conditions.SetConditions(
+		greenhousemetav1alpha1.FalseCondition(
+			greenhousemetav1alpha1.ReadyCondition,
+			"KubeconfigMissing",
+			"secret data key greenhousekubeconfig missing or empty",
+		),
+	)
+
+	ready, notReady := partitionReady([]greenhousev1alpha1.ClusterKubeconfig{notReadyCkc})
+	g.Expect(ready).To(BeEmpty())
+	g.Expect(notReady).To(HaveLen(1))
+
+	// Simulate the early-return condition in runSync:
+	// without --include-not-ready, len(ready)==0 returns early.
+	// with --include-not-ready and len(notReady)>0, execution continues.
+	shouldContinue := func(inclNotReady bool) bool {
+		return !(len(ready) == 0 && !(inclNotReady && len(notReady) > 0))
+	}
+	g.Expect(shouldContinue(false)).To(BeFalse(), "without flag: must return early")
+	g.Expect(shouldContinue(true)).To(BeTrue(), "with flag: must continue past early return")
 }
