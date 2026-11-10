@@ -608,7 +608,7 @@ func TestMergeKubeconfig_PrefersExistingLocalAuthName(t *testing.T) {
 		AuthInfo: "server-user",
 	}
 
-	err := mergeKubeconfig(localConfig, serverConfig)
+	err := mergeKubeconfig(localConfig, serverConfig, nil)
 	g.Expect(err).ToNot(HaveOccurred())
 
 	// The unmanaged "my-existing-user" should be reused — no cloudctl:auth-* should be created
@@ -653,7 +653,7 @@ func TestMergeKubeconfig_DeduplicatesSameOIDCUsers(t *testing.T) {
 	serverConfig.Contexts["cluster-b"] = &clientcmdapi.Context{Cluster: "cluster-b", AuthInfo: "cluster-b-user"}
 
 	localConfig := clientcmdapi.NewConfig()
-	err := mergeKubeconfig(localConfig, serverConfig)
+	err := mergeKubeconfig(localConfig, serverConfig, nil)
 	g.Expect(err).ToNot(HaveOccurred())
 
 	// Count managed auth entries — should be exactly 1
@@ -880,7 +880,7 @@ func TestDryRun_MergeAndDiff_NoWrite(t *testing.T) {
 	serverConfig.Contexts["new-cluster"] = &clientcmdapi.Context{Cluster: "new-cluster", AuthInfo: "shared-user"}
 
 	localConfig := localConfigBefore.DeepCopy()
-	err := mergeKubeconfig(localConfig, serverConfig)
+	err := mergeKubeconfig(localConfig, serverConfig, nil)
 	g.Expect(err).ToNot(HaveOccurred())
 
 	diff := diffKubeconfig(localConfigBefore, localConfig)
@@ -1078,12 +1078,15 @@ func TestInjectNotReadyStubs_PreservesLocalEntries(t *testing.T) {
 
 	serverConfig := clientcmdapi.NewConfig()
 
-	injectNotReadyStubs(serverConfig, []greenhousev1alpha1.ClusterKubeconfig{notReadyCkc}, localConfig)
+	preSeed := injectNotReadyStubs(serverConfig, []greenhousev1alpha1.ClusterKubeconfig{notReadyCkc}, localConfig)
 
-	// Stubs must be present so mergeKubeconfig's stale-cleanup does not delete them.
+	// Context and cluster stubs must be present so mergeKubeconfig's stale-cleanup does not delete them.
 	g.Expect(serverConfig.Contexts).To(HaveKey("broken-cluster"))
 	g.Expect(serverConfig.Clusters).To(HaveKey("broken-cluster"))
-	g.Expect(serverConfig.AuthInfos).To(HaveKey("oidc@broken-cluster"))
+	// AuthInfo is no longer added to serverConfig (to avoid dedup side-effects);
+	// instead it is returned via the pre-seed map for authInfoMap population.
+	g.Expect(serverConfig.AuthInfos).NotTo(HaveKey("oidc@broken-cluster"))
+	g.Expect(preSeed).To(HaveKeyWithValue("oidc@broken-cluster", "cloudctl:oidc@broken-cluster"))
 
 	// Fix 2: stub context references must be unprefixed to avoid double-prefix on re-merge.
 	g.Expect(serverConfig.Contexts["broken-cluster"].Cluster).To(Equal("broken-cluster"))
@@ -1117,7 +1120,7 @@ func TestInjectNotReadyStubs_UsesSpecContextNames(t *testing.T) {
 
 	serverConfig := clientcmdapi.NewConfig()
 
-	injectNotReadyStubs(serverConfig, []greenhousev1alpha1.ClusterKubeconfig{notReadyCkc}, localConfig)
+	_ = injectNotReadyStubs(serverConfig, []greenhousev1alpha1.ClusterKubeconfig{notReadyCkc}, localConfig)
 
 	// Stub must be keyed by spec context name "ctx1", not resource name "demo".
 	g.Expect(serverConfig.Contexts).To(HaveKey("ctx1"))
@@ -1144,7 +1147,7 @@ func TestInjectNotReadyStubs_SkipsUnmanagedContexts(t *testing.T) {
 
 	serverConfig := clientcmdapi.NewConfig()
 
-	injectNotReadyStubs(serverConfig, []greenhousev1alpha1.ClusterKubeconfig{notReadyCkc}, localConfig)
+	_ = injectNotReadyStubs(serverConfig, []greenhousev1alpha1.ClusterKubeconfig{notReadyCkc}, localConfig)
 
 	// Unmanaged context must not be touched.
 	g.Expect(serverConfig.Contexts).To(BeEmpty())
@@ -1166,12 +1169,13 @@ func TestInjectNotReadyStubs_SkipsUnknownClusters(t *testing.T) {
 	serverConfig := clientcmdapi.NewConfig()
 	localConfig := clientcmdapi.NewConfig()
 
-	injectNotReadyStubs(serverConfig, []greenhousev1alpha1.ClusterKubeconfig{notReadyCkc}, localConfig)
+	preSeed := injectNotReadyStubs(serverConfig, []greenhousev1alpha1.ClusterKubeconfig{notReadyCkc}, localConfig)
 
 	// Nothing added — no local entry to preserve.
 	g.Expect(serverConfig.Contexts).To(BeEmpty())
 	g.Expect(serverConfig.Clusters).To(BeEmpty())
 	g.Expect(serverConfig.AuthInfos).To(BeEmpty())
+	g.Expect(preSeed).To(BeEmpty())
 }
 
 func TestIncludeNotReady_MergesSpecData(t *testing.T) {
@@ -1233,12 +1237,8 @@ func TestIncludeNotReady_BypassesEarlyReturnWhenAllNotReady(t *testing.T) {
 	g.Expect(ready).To(BeEmpty())
 	g.Expect(notReady).To(HaveLen(1))
 
-	// Simulate the early-return condition in runSync:
-	// without --include-not-ready, len(ready)==0 returns early.
-	// with --include-not-ready and len(notReady)>0, execution continues.
-	earlyReturn := func(inclNotReady bool) bool {
-		return len(ready) == 0 && (!inclNotReady || len(notReady) == 0)
-	}
-	g.Expect(earlyReturn(false)).To(BeTrue(), "without flag: must return early")
-	g.Expect(earlyReturn(true)).To(BeFalse(), "with flag: must continue past early return")
+	// Exercise the production shouldSkipMerge helper directly so that if runSync's
+	// early-return logic reverts (e.g. drops the inclNotReady guard), this test fails.
+	g.Expect(shouldSkipMerge(ready, notReady, false)).To(BeTrue(), "without flag: must skip merge when all clusters not-ready")
+	g.Expect(shouldSkipMerge(ready, notReady, true)).To(BeFalse(), "with flag: must not skip merge when all clusters not-ready")
 }

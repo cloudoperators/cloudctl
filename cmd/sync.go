@@ -212,7 +212,7 @@ func runSync(cmd *cobra.Command, args []string) error {
 
 	ready, notReady := partitionReady(allKubeconfigs)
 
-	if len(ready) == 0 && (!includeNotReady || len(notReady) == 0) {
+	if shouldSkipMerge(ready, notReady, includeNotReady) {
 		return printer.Print(buildSyncResult(nil, notReady))
 	}
 	var localConfig *clientcmdapi.Config
@@ -231,10 +231,19 @@ func runSync(cmd *cobra.Command, args []string) error {
 
 	// merged = ready + notReady entries that were opted into full merge.
 	// skipped = notReady entries that were NOT merged (preserved in place or absent).
+	// notReady entries with an empty spec are always kept on the stub/preservation path
+	// regardless of --include-not-ready: they contribute no incoming data and merging
+	// them would delete any existing local entry without adding anything in return.
 	merged := ready
 	var skipped []v1alpha1.ClusterKubeconfig
 	if includeNotReady {
-		merged = append(merged, notReady...)
+		for _, ckc := range notReady {
+			if hasSpecData(ckc) {
+				merged = append(merged, ckc)
+			} else {
+				skipped = append(skipped, ckc)
+			}
+		}
 	} else {
 		skipped = notReady
 	}
@@ -251,8 +260,12 @@ func runSync(cmd *cobra.Command, args []string) error {
 	// cleanup pass in mergeKubeconfig treats them as still-present on the server side.
 	// The stubs only affect deletion logic; they are never written to disk.
 	// When --include-not-ready is set, notReady entries are fully merged instead.
+	// stubsToPreserve is only populated when stubs are injected (i.e. !includeNotReady).
+	// It maps server-side authinfo names to the local managed name so mergeKubeconfig
+	// can pre-seed authInfoMap and avoid redirecting stub contexts to a wrong authinfo.
+	var stubsToPreserve map[string]string
 	if !includeNotReady {
-		injectNotReadyStubs(serverConfig, notReady, localConfig)
+		stubsToPreserve = injectNotReadyStubs(serverConfig, skipped, localConfig)
 	}
 
 	// Take a snapshot before merge for dry-run diff — only needed when --dry-run is set.
@@ -266,7 +279,7 @@ func runSync(cmd *cobra.Command, args []string) error {
 		spinnerLabel = "Simulating merge (dry-run)..."
 	}
 	stopMerge := printer.StartSpinner(spinnerLabel)
-	err = mergeKubeconfig(localConfig, serverConfig)
+	err = mergeKubeconfig(localConfig, serverConfig, stubsToPreserve)
 	stopMerge()
 	if err != nil {
 		_ = printer.Print(buildFailedSyncResult(merged, skipped, err))
@@ -305,6 +318,23 @@ func partitionReady(items []v1alpha1.ClusterKubeconfig) (ready, notReady []v1alp
 	return ready, notReady
 }
 
+// hasSpecData reports whether the ClusterKubeconfig has at least one cluster, context, or
+// authinfo entry in its spec. Resources with an entirely empty spec contribute no entries to
+// the merged kubeconfig and should remain on the preservation path even when --include-not-ready
+// is set, to avoid their existing local entries being deleted by the stale-cleanup pass.
+func hasSpecData(ckc v1alpha1.ClusterKubeconfig) bool {
+	return len(ckc.Spec.Kubeconfig.Clusters) > 0 ||
+		len(ckc.Spec.Kubeconfig.Contexts) > 0 ||
+		len(ckc.Spec.Kubeconfig.AuthInfo) > 0
+}
+
+// shouldSkipMerge returns true when there is nothing useful to merge:
+// no ready clusters and either the --include-not-ready flag is not set or there are no
+// not-ready clusters to merge either.
+func shouldSkipMerge(ready, notReady []v1alpha1.ClusterKubeconfig, inclNotReady bool) bool {
+	return len(ready) == 0 && (!inclNotReady || len(notReady) == 0)
+}
+
 // filterReady returns only ClusterKubeconfigs that have Ready condition set to True.
 // Deprecated: use partitionReady instead.
 func filterReady(items []v1alpha1.ClusterKubeconfig) []v1alpha1.ClusterKubeconfig {
@@ -317,7 +347,10 @@ func filterReady(items []v1alpha1.ClusterKubeconfig) []v1alpha1.ClusterKubeconfi
 // stale-cleanup pass from deleting local entries for clusters that are temporarily not-ready —
 // the user needs those entries to reach and recover the cluster.
 // Stubs are derived from the existing local entries (no spec data required) and are never written to disk.
-func injectNotReadyStubs(serverConfig *clientcmdapi.Config, notReady []v1alpha1.ClusterKubeconfig, localConfig *clientcmdapi.Config) {
+// The returned map (server-side unprefixed authinfo name → local managed name) is passed to
+// mergeKubeconfig as a pre-seed so stub context authinfo references are not redirected by deduplication.
+func injectNotReadyStubs(serverConfig *clientcmdapi.Config, notReady []v1alpha1.ClusterKubeconfig, localConfig *clientcmdapi.Config) map[string]string {
+	authPreSeed := make(map[string]string)
 	for _, ckc := range notReady {
 		// Collect the set of context names this CKC owns: prefer spec context names when
 		// available (spec may be populated even if Ready=False), fall back to the resource
@@ -335,12 +368,12 @@ func injectNotReadyStubs(serverConfig *clientcmdapi.Config, notReady []v1alpha1.
 			if !ok || localCtx == nil {
 				continue
 			}
-			// Fix 6: skip unmanaged contexts — only protect entries cloudctl wrote.
+			// skip unmanaged contexts — only protect entries cloudctl wrote.
 			if !isManaged(localCtx.Cluster) {
 				continue
 			}
 
-			// Fix 2: stub context must carry unprefixed cluster/authinfo references so
+			// stub context must carry unprefixed cluster/authinfo references so
 			// mergeKubeconfig's lookup (which strips the prefix before checking serverConfig)
 			// resolves correctly and does not produce double-prefixed names.
 			stubCtx := &clientcmdapi.Context{
@@ -360,15 +393,21 @@ func injectNotReadyStubs(serverConfig *clientcmdapi.Config, notReady []v1alpha1.
 				}
 			}
 
-			// Inject stub authinfo keyed by the unprefixed name.
+			// Record the authinfo pre-seed mapping instead of adding the stub to serverConfig.
+			// Putting the stub authinfo into serverConfig would cause mergeKubeconfig's
+			// deduplication pass to assign a new hash-derived managed name, redirecting the
+			// preserved context to a different authinfo entry and altering its effective identity.
+			// The pre-seed tells mergeKubeconfig to map the stub authinfo name directly to the
+			// existing local managed name, keeping the context unchanged.
 			authName := unmanagedNameFunc(localCtx.AuthInfo)
-			if _, exists := serverConfig.AuthInfos[authName]; !exists {
-				if src, ok := localConfig.AuthInfos[localCtx.AuthInfo]; ok {
-					serverConfig.AuthInfos[authName] = src.DeepCopy()
+			if authName != "" && localCtx.AuthInfo != "" {
+				if _, exists := serverConfig.AuthInfos[authName]; !exists {
+					authPreSeed[authName] = localCtx.AuthInfo
 				}
 			}
 		}
 	}
+	return authPreSeed
 }
 
 // buildSyncResult constructs an output.SyncResult from ready and notReady cluster lists.
@@ -574,7 +613,7 @@ func buildKubeloginArgs(cfg map[string]string, extra []string, tokenCacheDir str
 	return args
 }
 
-func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdapi.Config) error {
+func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdapi.Config, preSeedAuthInfoMap map[string]string) error {
 	// Merge Clusters
 	for serverName, serverCluster := range serverConfig.Clusters {
 		managedName := managedNameFunc(serverName)
@@ -603,6 +642,13 @@ func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdap
 	var authInfoMap map[string]string // key: server authinfo name, value: authinfo name to use (may be unmanaged local or managed hash-based)
 	if mergeIdenticalUsers {
 		authInfoMap = make(map[string]string)
+
+		// Pre-seed stub authinfo mappings from notReady preservation. These entries were
+		// not added to serverConfig (to avoid dedup side effects) but their context
+		// references must still resolve to the correct local managed name.
+		for serverName, localManagedName := range preSeedAuthInfoMap {
+			authInfoMap[serverName] = localManagedName
+		}
 
 		// Build a reverse lookup of unmanaged local auth entries so we can reuse their names
 		// instead of creating new cloudctl:auth-<hash> entries.
@@ -782,9 +828,14 @@ func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdap
 					delete(localConfig.AuthInfos, localName)
 				}
 			} else {
-				// Derive the server-side name by stripping the prefix
+				// Derive the server-side name by stripping the prefix.
+				// Also protect authinfos pre-seeded from notReady stubs — those were not
+				// added to serverConfig, so the server-side name lookup would otherwise
+				// cause them to be deleted.
 				serverName := unmanagedNameFunc(localName)
-				if _, exists := serverConfig.AuthInfos[serverName]; !exists {
+				_, inServer := serverConfig.AuthInfos[serverName]
+				_, inPreSeed := preSeedAuthInfoMap[serverName]
+				if !inServer && !inPreSeed {
 					slog.Debug("removing stale authinfo", "name", localName)
 					delete(localConfig.AuthInfos, localName)
 				}
