@@ -773,7 +773,14 @@ func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdap
 				localConfig.AuthInfos[managedAuthInfoName] = serverAuth
 			}
 		} else {
-			managedAuthInfoName = managedNameFunc(serverCtx.AuthInfo)
+			// Without deduplication, derive the managed name from the server-side name.
+			// For stub contexts injected by injectNotReadyStubs the authinfo was not added
+			// to serverConfig; its correct local managed name is in preSeedAuthInfoMap.
+			if preSeedName, ok := preSeedAuthInfoMap[serverCtx.AuthInfo]; ok {
+				managedAuthInfoName = preSeedName
+			} else {
+				managedAuthInfoName = managedNameFunc(serverCtx.AuthInfo)
+			}
 		}
 
 		// Update Cluster name
@@ -870,7 +877,12 @@ func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdap
 				}
 				expectedAuthInfo = mappedName
 			} else {
-				expectedAuthInfo = managedNameFunc(serverCtx.AuthInfo)
+				// Same pre-seed lookup as in context merging above.
+				if preSeedName, ok := preSeedAuthInfoMap[serverCtx.AuthInfo]; ok {
+					expectedAuthInfo = preSeedName
+				} else {
+					expectedAuthInfo = managedNameFunc(serverCtx.AuthInfo)
+				}
 			}
 
 			if localCtx.Cluster != expectedCluster || localCtx.AuthInfo != expectedAuthInfo {
