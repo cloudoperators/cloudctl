@@ -40,7 +40,9 @@ func GetReleaseAssetDigest(ctx context.Context, owner, repo, tag, assetName stri
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("github api %s returned status %d", apiURL, resp.StatusCode)
 	}
@@ -137,6 +139,9 @@ func DownloadGitHubReleaseBinary(ctx context.Context, owner, repo, version, asse
 	url := fmt.Sprintf("https://github.com/%s/%s/releases/download/v%s/%s", owner, repo, version, assetName)
 
 	destPath := filepath.Join(config.XDGLocations.CacheHome(), cacheName)
+	if err := os.MkdirAll(filepath.Dir(destPath), 0o700); err != nil {
+		return "", err
+	}
 	if _, err := os.Stat(destPath); err == nil {
 		logrus.Debugf("%s exists at %s. Skipping download", repo, destPath)
 		return destPath, nil
@@ -184,10 +189,24 @@ func DownloadGitHubReleaseBinary(ctx context.Context, owner, repo, version, asse
 	}
 	defer cleanup()
 
-	if err := DownloadArchive(ctx, url, checksumSource, destPath, archiveExt, filter); err != nil {
+	staged, err := os.CreateTemp(filepath.Dir(destPath), filepath.Base(destPath)+"-*")
+	if err != nil {
 		return "", err
 	}
-	if err := os.Chmod(destPath, 0o700); err != nil {
+	stagedPath := staged.Name()
+	defer func() {
+		_ = os.Remove(stagedPath)
+	}()
+	if err := staged.Close(); err != nil {
+		return "", err
+	}
+	if err := DownloadArchive(ctx, url, checksumSource, stagedPath, archiveExt, filter); err != nil {
+		return "", err
+	}
+	if err := os.Chmod(stagedPath, 0o700); err != nil {
+		return "", err
+	}
+	if err := os.Rename(stagedPath, destPath); err != nil {
 		return "", err
 	}
 	return destPath, nil

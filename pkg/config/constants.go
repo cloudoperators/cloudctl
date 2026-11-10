@@ -9,5 +9,5 @@ import (
 
 var (
 	CloudCtlUserAgent = "cloudctl"
-	XDGLocations = xdg.New("SAPCC", "cloudctl")
+	XDGLocations      = xdg.New("cloudoperators", "cloudctl")
 )
