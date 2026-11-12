@@ -17,6 +17,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -371,6 +372,7 @@ func withHashAndProgress(r io.Reader, hasher hash.Hash, counter *WriteCounter, c
 type downloadLimitReader struct {
 	*io.LimitedReader
 }
+
 func (r downloadLimitReader) Read(p []byte) (int, error) {
 	if len(p) == 0 {
 		return 0, nil
@@ -391,7 +393,7 @@ func (r downloadLimitReader) Read(p []byte) (int, error) {
 // If the URL looks like "<asset>.sha256", the asset name is derived from the basename.
 func openChecksumSource(ctx context.Context, url string) (io.Reader, func(), string, error) {
 	wantAsset := ""
-	base := filepath.Base(url)
+	base := path.Base(url)
 	if w, ok := strings.CutSuffix(base, ".sha256"); ok {
 		wantAsset = w
 	}
@@ -466,9 +468,9 @@ func selectChecksumToken(r io.Reader, wantAsset string) (string, error) {
 				return tok, nil
 			}
 			// Fallback: match filenames with or without the sha256sum binary-mode marker.
- 			if slices.ContainsFunc(strings.Fields(line), func(field string) bool {
- 				return strings.TrimPrefix(field, "*") == wantAsset
- 			}) {
+			if slices.ContainsFunc(strings.Fields(line), func(field string) bool {
+				return strings.TrimPrefix(field, "*") == wantAsset
+			}) {
 				return tok, nil
 			}
 		}

@@ -8,14 +8,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 
-	"github.com/logrusorgru/aurora"
-	"github.com/sirupsen/logrus"
+	"github.com/adrg/xdg"
 
 	"github.com/cloudoperators/cloudctl/pkg/config"
 )
@@ -138,18 +138,18 @@ func DownloadGitHubReleaseBinary(ctx context.Context, owner, repo, version, asse
 
 	url := fmt.Sprintf("https://github.com/%s/%s/releases/download/v%s/%s", owner, repo, version, assetName)
 
-	destPath := filepath.Join(config.XDGLocations.CacheHome(), cacheName)
+	destPath := filepath.Join(xdg.CacheHome, cacheName)
 	if err := os.MkdirAll(filepath.Dir(destPath), 0o700); err != nil {
 		return "", err
 	}
 	if _, err := os.Stat(destPath); err == nil {
-		logrus.Debugf("%s exists at %s. Skipping download", repo, destPath)
+		slog.Debug("File already exists. Skipping download", "name", repo, "path", destPath)
 		return destPath, nil
 	} else if !os.IsNotExist(err) {
 		return "", err
 	}
 
-	logrus.Debugf(aurora.BrightGreen("Downloading %s %s from %s").Bold().String(), repo, "v"+version, url)
+	slog.Debug("Downloading file", "name", repo, "version", "v"+version, "url", url)
 
 	// Build filter for the binary inside the archive
 	binName := binaryBase

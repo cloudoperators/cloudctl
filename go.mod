@@ -3,16 +3,14 @@ module github.com/cloudoperators/cloudctl
 go 1.25.0
 
 require (
-	github.com/OpenPeeDeeP/xdg v1.0.0
+	github.com/adrg/xdg v0.5.3
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/cloudoperators/greenhouse v0.8.0
 	github.com/dustin/go-humanize v1.0.1
-	github.com/logrusorgru/aurora v2.0.3+incompatible
 	github.com/minio/selfupdate v0.6.0
 	github.com/onsi/gomega v1.38.3
-	github.com/sirupsen/logrus v1.9.3
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
 	github.com/spf13/viper v1.21.0

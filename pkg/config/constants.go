@@ -3,11 +3,6 @@
 
 package config
 
-import (
-	"github.com/OpenPeeDeeP/xdg"
-)
-
 var (
 	CloudCtlUserAgent = "cloudctl"
-	XDGLocations      = xdg.New("cloudoperators", "cloudctl")
 )
