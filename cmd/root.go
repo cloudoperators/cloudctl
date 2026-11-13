@@ -154,7 +154,10 @@ func setupConfig() error {
 		// First we are trying config provided as a command line parameter. Fail if there was an error
 		// during reading configuration from this specified path.
 		viper.SetConfigFile(configFilePath)
-		return viper.ReadInConfig()
+		if err := viper.ReadInConfig(); err != nil {
+			return fmt.Errorf("failed to read config file %q: %w", configFilePath, err)
+		}
+		return nil
 	} else {
 		// Phase 2
 		// Then we are searching for ".cloudctl.yaml" in current or home directory
@@ -194,6 +197,11 @@ func setupConfig() error {
 		}
 	}
 
+	if err != nil {
+		if cf := viper.ConfigFileUsed(); cf != "" {
+			return fmt.Errorf("failed to read config file %q: %w", cf, err)
+		}
+	}
 	return err
 }
 

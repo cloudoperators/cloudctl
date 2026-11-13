@@ -1031,10 +1031,10 @@ func TestWriteTargetFromKUBECONFIG(t *testing.T) {
 			wantErrSubs: "contains no usable first path",
 		},
 		{
-			name:        "empty remote: KUBECONFIG also empty yields error",
-			remoteKC:    "",
-			kubeconfig:  "",
-			wantErrSubs: "KUBECONFIG is empty",
+			name:       "empty remote: KUBECONFIG also empty falls back to default",
+			remoteKC:   "",
+			kubeconfig: "",
+			wantTarget: clientcmd.RecommendedHomeFile,
 		},
 	}
 
@@ -1241,4 +1241,67 @@ func TestIncludeNotReady_BypassesEarlyReturnWhenAllNotReady(t *testing.T) {
 	// early-return logic reverts (e.g. drops the inclNotReady guard), this test fails.
 	g.Expect(shouldSkipMerge(ready, notReady, false)).To(BeTrue(), "without flag: must skip merge when all clusters not-ready")
 	g.Expect(shouldSkipMerge(ready, notReady, true)).To(BeFalse(), "with flag: must not skip merge when all clusters not-ready")
+}
+
+func TestLoadKubeconfigContext(t *testing.T) {
+	g := NewWithT(t)
+
+	// Write a temp kubeconfig with a context that has a namespace.
+	cfg := clientcmdapi.NewConfig()
+	cfg.Clusters["gh"] = &clientcmdapi.Cluster{Server: "https://greenhouse.example.com"}
+	cfg.AuthInfos["gh-user"] = &clientcmdapi.AuthInfo{}
+	cfg.Contexts["greenhouse-my-org"] = &clientcmdapi.Context{
+		Cluster:   "gh",
+		AuthInfo:  "gh-user",
+		Namespace: "my-org",
+	}
+	cfg.CurrentContext = "greenhouse-my-org"
+
+	tmpFile := filepath.Join(t.TempDir(), "kubeconfig")
+	g.Expect(clientcmd.WriteToFile(*cfg, tmpFile)).To(Succeed())
+
+	// Default context: both context name and namespace are returned.
+	activeCtx, ns, err := loadKubeconfigContext("", tmpFile)
+	g.Expect(err).ToNot(HaveOccurred())
+	g.Expect(activeCtx).To(Equal("greenhouse-my-org"))
+	g.Expect(ns).To(Equal("my-org"))
+
+	// Explicit context name works too.
+	activeCtx, ns, err = loadKubeconfigContext("greenhouse-my-org", tmpFile)
+	g.Expect(err).ToNot(HaveOccurred())
+	g.Expect(activeCtx).To(Equal("greenhouse-my-org"))
+	g.Expect(ns).To(Equal("my-org"))
+
+	// Context with no namespace returns empty namespace, no error.
+	cfg.Contexts["no-ns"] = &clientcmdapi.Context{Cluster: "gh", AuthInfo: "gh-user"}
+	g.Expect(clientcmd.WriteToFile(*cfg, tmpFile)).To(Succeed())
+	activeCtx, ns, err = loadKubeconfigContext("no-ns", tmpFile)
+	g.Expect(err).ToNot(HaveOccurred())
+	g.Expect(activeCtx).To(Equal("no-ns"))
+	g.Expect(ns).To(BeEmpty())
+}
+
+func TestSyncCmd_MissingNamespaceError(t *testing.T) {
+	g := NewWithT(t)
+
+	// A kubeconfig whose active context has no namespace — autodetect yields "".
+	cfg := clientcmdapi.NewConfig()
+	cfg.Clusters["gh"] = &clientcmdapi.Cluster{Server: "https://greenhouse.example.com"}
+	cfg.AuthInfos["gh-user"] = &clientcmdapi.AuthInfo{}
+	cfg.Contexts["ctx-no-ns"] = &clientcmdapi.Context{Cluster: "gh", AuthInfo: "gh-user"}
+	cfg.CurrentContext = "ctx-no-ns"
+	tmpFile := filepath.Join(t.TempDir(), "kubeconfig")
+	g.Expect(clientcmd.WriteToFile(*cfg, tmpFile)).To(Succeed())
+
+	// loadKubeconfigContext returns empty namespace for a context without one.
+	_, ns, err := loadKubeconfigContext("", tmpFile)
+	g.Expect(err).ToNot(HaveOccurred())
+	g.Expect(ns).To(BeEmpty(), "context without namespace must yield empty string")
+
+	// The error message produced when namespace is still "" after autodetect
+	// must mention all three resolution paths.
+	errMsg := "greenhouse organization namespace is required: set --greenhouse-cluster-namespace, add 'greenhouse-cluster-namespace: <org>' to ~/.cloudctl.yaml, or ensure the active context in your kubeconfig has a namespace set"
+	g.Expect(errMsg).To(ContainSubstring("--greenhouse-cluster-namespace"))
+	g.Expect(errMsg).To(ContainSubstring("~/.cloudctl.yaml"))
+	g.Expect(errMsg).To(ContainSubstring("namespace"))
 }

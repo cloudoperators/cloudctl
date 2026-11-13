@@ -48,10 +48,7 @@ var (
 func init() {
 	syncCmd.Flags().StringVarP(&greenhouseClusterKubeconfig, "greenhouse-cluster-kubeconfig", "k", clientcmd.RecommendedHomeFile, "Path to the Greenhouse cluster kubeconfig")
 	syncCmd.Flags().StringVarP(&greenhouseClusterContext, "greenhouse-cluster-context", "c", "", "Context to use from the Greenhouse kubeconfig (defaults to current context)")
-	syncCmd.Flags().StringVarP(&greenhouseClusterNamespace, "greenhouse-cluster-namespace", "n", "", "Greenhouse organization namespace (required)")
-	if err := syncCmd.MarkFlagRequired("greenhouse-cluster-namespace"); err != nil {
-		panic(err)
-	}
+	syncCmd.Flags().StringVarP(&greenhouseClusterNamespace, "greenhouse-cluster-namespace", "n", "", "Greenhouse organization namespace")
 	syncCmd.Flags().StringVarP(&remoteClusterKubeconfig, "remote-cluster-kubeconfig", "r", clientcmd.RecommendedHomeFile, "Local kubeconfig file to merge into")
 	syncCmd.Flags().StringVar(&remoteClusterName, "remote-cluster-name", "", "Sync only this cluster by name (default: all ready clusters)")
 	syncCmd.Flags().StringVar(&prefix, "prefix", "cloudctl", "Prefix applied to managed kubeconfig entries to avoid collisions")
@@ -100,6 +97,13 @@ local config. Existing non-managed entries are never touched.
 OIDC credentials are preserved across syncs: id-token and refresh-token are
 carried forward so you do not need to re-authenticate after every sync.
 
+One-time setup: persist connection defaults in ~/.cloudctl.yaml so you can
+run "cloudctl sync" with no flags:
+
+  greenhouse-cluster-namespace: my-org
+  greenhouse-cluster-context: greenhouse
+  greenhouse-cluster-kubeconfig: ~/.kube/config
+
 Examples:
   # Sync all clusters for an organization
   cloudctl sync -n my-org
@@ -112,6 +116,9 @@ Examples:
 
   # Preview what would change without writing
   cloudctl sync -n my-org --dry-run
+
+  # No flags after one-time setup via ~/.cloudctl.yaml
+  cloudctl sync
 
   # Debug mode — shows every cluster/authinfo/context decision on stderr
   cloudctl sync -n my-org --log-level debug`,
@@ -133,6 +140,23 @@ func runSync(cmd *cobra.Command, args []string) error {
 	if viper.IsSet("remote-cluster-kubeconfig") && remoteClusterKubeconfig == "" {
 		return fmt.Errorf("--remote-cluster-kubeconfig must not be empty")
 	}
+	if greenhouseClusterNamespace == "" {
+		// Fall back to the namespace from the active Greenhouse context (org name == namespace).
+		// loadKubeconfigContext also resolves the effective context name in one load.
+		resolvedCtx, ns, err := loadKubeconfigContext(greenhouseClusterContext, greenhouseClusterKubeconfig)
+		if err != nil {
+			return fmt.Errorf("greenhouse organization namespace is required: set --greenhouse-cluster-namespace, add 'greenhouse-cluster-namespace: <org>' to ~/.cloudctl.yaml, or ensure the active context in your kubeconfig has a namespace set (%w)", err)
+		}
+		if ns == "" {
+			return fmt.Errorf("greenhouse organization namespace is required: set --greenhouse-cluster-namespace, add 'greenhouse-cluster-namespace: <org>' to ~/.cloudctl.yaml, or ensure the active context in your kubeconfig has a namespace set")
+		}
+		greenhouseClusterNamespace = ns
+		// Backfill resolved context so conn and error messages show the real name.
+		if greenhouseClusterContext == "" {
+			greenhouseClusterContext = resolvedCtx
+		}
+	}
+
 	remoteClusterName = viper.GetString("remote-cluster-name")
 	prefix = viper.GetString("prefix")
 	mergeIdenticalUsers = viper.GetBool("merge-identical-users")
@@ -157,13 +181,22 @@ func runSync(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	if err := validateAuthType(authType, kubeloginPath); err != nil {
-		return err
+	// Resolve the display context name: if not already backfilled by namespace autodetect,
+	// read current-context from the kubeconfig (one load, no extra I/O on the hot path).
+	if greenhouseClusterContext == "" {
+		if resolvedCtx, _, err := loadKubeconfigContext("", greenhouseClusterKubeconfig); err == nil {
+			greenhouseClusterContext = resolvedCtx
+		}
 	}
 
-	ctxLabel := greenhouseClusterContext
-	if ctxLabel == "" {
-		ctxLabel = "(current context)"
+	conn := &output.SyncConnection{
+		Kubeconfig: resolveDisplayPath(greenhouseClusterKubeconfig),
+		Context:    greenhouseClusterContext,
+		Namespace:  greenhouseClusterNamespace,
+	}
+
+	if err := validateAuthType(authType, kubeloginPath); err != nil {
+		return err
 	}
 
 	var (
@@ -171,7 +204,7 @@ func runSync(cmd *cobra.Command, args []string) error {
 	)
 	centralConfig, err = configWithContext(greenhouseClusterContext, greenhouseClusterKubeconfig)
 	if err != nil {
-		return fmt.Errorf("failed to build greenhouse kubeconfig (source: %s, context: %s): %w", displayKubeconfig(greenhouseClusterKubeconfig), ctxLabel, err)
+		return fmt.Errorf("failed to build greenhouse kubeconfig (source: %s, context: %s): %w", conn.Kubeconfig, conn.Context, err)
 	}
 
 	// Create a scheme and register Greenhouse types.
@@ -213,16 +246,21 @@ func runSync(cmd *cobra.Command, args []string) error {
 	ready, notReady := partitionReady(allKubeconfigs)
 
 	if shouldSkipMerge(ready, notReady, includeNotReady) {
-		return printer.Print(buildSyncResult(nil, notReady))
+		r := buildSyncResult(nil, notReady)
+		r.Connection = conn
+		return printer.Print(r)
 	}
 	var localConfig *clientcmdapi.Config
 	if remoteClusterKubeconfig != "" {
 		localConfig, err = clientcmd.LoadFromFile(remoteClusterKubeconfig)
+		if err != nil {
+			return fmt.Errorf("failed to load local kubeconfig %q: %w", remoteClusterKubeconfig, err)
+		}
 	} else {
 		localConfig, err = clientcmd.NewDefaultClientConfigLoadingRules().Load()
-	}
-	if err != nil {
-		return fmt.Errorf("failed to load local kubeconfig: %w", err)
+		if err != nil {
+			return fmt.Errorf("failed to load local kubeconfig (%s): %w", displayKubeconfig(""), err)
+		}
 	}
 
 	if localConfig == nil {
@@ -282,7 +320,9 @@ func runSync(cmd *cobra.Command, args []string) error {
 	err = mergeKubeconfig(localConfig, serverConfig, stubsToPreserve)
 	stopMerge()
 	if err != nil {
-		_ = printer.Print(buildFailedSyncResult(merged, skipped, err))
+		r := buildFailedSyncResult(merged, skipped, err)
+		r.Connection = conn
+		_ = printer.Print(r)
 		return fmt.Errorf(`failed to merge ClusterKubeconfig: %w`, err)
 	}
 
@@ -297,11 +337,20 @@ func runSync(cmd *cobra.Command, args []string) error {
 	}
 
 	if writeErr := writeConfig(localConfig, writeTarget); writeErr != nil {
-		_ = printer.Print(buildFailedSyncResult(merged, skipped, writeErr))
+		r := buildFailedSyncResult(merged, skipped, writeErr)
+		r.Connection = conn
+		_ = printer.Print(r)
 		return fmt.Errorf("failed to write merged kubeconfig: %w", writeErr)
 	}
 
-	return printer.Print(buildSyncResult(merged, skipped))
+	r := buildSyncResult(merged, skipped)
+	r.Connection = conn
+	// Only show write target when it differs from the greenhouse kubeconfig source,
+	// to avoid printing the same path twice.
+	if writeTarget != conn.Kubeconfig {
+		r.WriteTarget = writeTarget
+	}
+	return printer.Print(r)
 }
 
 // partitionReady splits ClusterKubeconfigs into ready and notReady slices.
@@ -780,6 +829,8 @@ func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdap
 			if preSeedName, ok := preSeedAuthInfoMap[serverCtx.AuthInfo]; ok {
 				managedAuthInfoName = preSeedName
 			} else {
+				// Only write the context when the authinfo it references exists in serverConfig;
+				// a context pointing at a missing authinfo would produce a broken kubeconfig entry.
 				if _, exists := serverConfig.AuthInfos[serverCtx.AuthInfo]; !exists {
 					slog.Debug("skipping context: authinfo missing from server config", "context", serverName, "authinfo", serverCtx.AuthInfo)
 					continue
@@ -952,12 +1003,51 @@ func resolveWriteTarget(remoteKubeconfig string) (string, error) {
 	if remoteKubeconfig != "" {
 		return remoteKubeconfig, nil
 	}
-	kc := os.Getenv("KUBECONFIG")
-	if kc == "" {
-		return "", fmt.Errorf("cannot determine write target: --remote-cluster-kubeconfig is not set and KUBECONFIG is empty")
+	// Mirror kubectl's default file selection: first entry in KUBECONFIG, else ~/.kube/config.
+	if kc := os.Getenv("KUBECONFIG"); kc != "" {
+		if parts := strings.SplitN(kc, string(os.PathListSeparator), 2); len(parts) > 0 && parts[0] != "" {
+			return parts[0], nil
+		}
+		return "", fmt.Errorf("cannot determine write target: KUBECONFIG=%q contains no usable first path", kc)
 	}
-	if parts := strings.SplitN(kc, string(os.PathListSeparator), 2); len(parts) > 0 && parts[0] != "" {
-		return parts[0], nil
+	return clientcmd.RecommendedHomeFile, nil
+}
+
+// resolveDisplayPath returns the concrete file path for the effective kubeconfig.
+// When kubeconfigPath is empty (KUBECONFIG env or default), it resolves to the
+// first KUBECONFIG entry or ~/.kube/config — the same path that would be read.
+// Delegates to resolveWriteTarget so the resolution logic stays in one place.
+func resolveDisplayPath(kubeconfigPath string) string {
+	if kubeconfigPath != "" {
+		return kubeconfigPath
 	}
-	return "", fmt.Errorf("cannot determine write target: KUBECONFIG=%q contains no usable first path", kc)
+	// resolveWriteTarget never returns an error when kubeconfigPath is "".
+	p, _ := resolveWriteTarget("")
+	return p
+}
+
+// loadKubeconfigContext resolves the active context name and its namespace from
+// the given kubeconfig in a single load. When contextName is explicitly provided
+// only the namespace lookup uses the file; otherwise both are read from
+// current-context. Returns ("", "", nil) when the context has no namespace set.
+func loadKubeconfigContext(contextName, kubeconfigPath string) (activeContext, namespace string, err error) {
+	var loadingRules *clientcmd.ClientConfigLoadingRules
+	if kubeconfigPath != "" {
+		loadingRules = &clientcmd.ClientConfigLoadingRules{ExplicitPath: kubeconfigPath}
+	} else {
+		loadingRules = clientcmd.NewDefaultClientConfigLoadingRules()
+	}
+	cfg, err := loadingRules.Load()
+	if err != nil {
+		return "", "", fmt.Errorf("failed to load kubeconfig: %w", err)
+	}
+	activeContext = contextName
+	if activeContext == "" {
+		activeContext = cfg.CurrentContext
+	}
+	ctx, ok := cfg.Contexts[activeContext]
+	if !ok || ctx == nil {
+		return activeContext, "", nil
+	}
+	return activeContext, ctx.Namespace, nil
 }
