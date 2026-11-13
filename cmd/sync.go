@@ -763,7 +763,8 @@ func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdap
 				// However, to be safe, generate a new managedAuthName.
 				serverAuth, exists := serverConfig.AuthInfos[serverAuthName]
 				if !exists || serverAuth == nil {
-					return fmt.Errorf("AuthInfo %s referenced in context %s does not exist or is nil", serverAuthName, serverName)
+					slog.Debug("skipping context: authinfo missing from server config", "context", serverName, "authinfo", serverAuthName)
+					continue
 				}
 				uniqueKey := generateAuthInfoKey(serverAuth)
 				hash := sha256.Sum256([]byte(uniqueKey))
@@ -779,6 +780,10 @@ func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdap
 			if preSeedName, ok := preSeedAuthInfoMap[serverCtx.AuthInfo]; ok {
 				managedAuthInfoName = preSeedName
 			} else {
+				if _, exists := serverConfig.AuthInfos[serverCtx.AuthInfo]; !exists {
+					slog.Debug("skipping context: authinfo missing from server config", "context", serverName, "authinfo", serverCtx.AuthInfo)
+					continue
+				}
 				managedAuthInfoName = managedNameFunc(serverCtx.AuthInfo)
 			}
 		}
