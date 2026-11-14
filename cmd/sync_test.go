@@ -1031,10 +1031,10 @@ func TestWriteTargetFromKUBECONFIG(t *testing.T) {
 			wantErrSubs: "contains no usable first path",
 		},
 		{
-			name:        "empty remote: KUBECONFIG also empty yields error",
-			remoteKC:    "",
-			kubeconfig:  "",
-			wantErrSubs: "KUBECONFIG is empty",
+			name:       "empty remote: KUBECONFIG also empty falls back to default",
+			remoteKC:   "",
+			kubeconfig: "",
+			wantTarget: clientcmd.RecommendedHomeFile,
 		},
 	}
 
@@ -1052,6 +1052,75 @@ func TestWriteTargetFromKUBECONFIG(t *testing.T) {
 				g.Expect(writeErr).ToNot(HaveOccurred())
 				g.Expect(writeTarget).To(Equal(tc.wantTarget))
 			}
+		})
+	}
+}
+
+func TestResolveDisplaySources(t *testing.T) {
+	sep := string(os.PathListSeparator)
+
+	tests := []struct {
+		name           string
+		explicitPath   string
+		kubeconfig     string
+		wantSources    string
+	}{
+		{
+			name:        "explicit path returned as-is",
+			explicitPath: "/explicit/kubeconfig",
+			kubeconfig:  "/env/kubeconfig",
+			wantSources: "/explicit/kubeconfig",
+		},
+		{
+			name:        "single KUBECONFIG entry returned as-is",
+			explicitPath: "",
+			kubeconfig:  "/single/kubeconfig",
+			wantSources: "/single/kubeconfig",
+		},
+		{
+			name:        "multi-file KUBECONFIG: full list returned",
+			explicitPath: "",
+			kubeconfig:  "/first" + sep + "/second" + sep + "/third",
+			wantSources: "/first" + sep + "/second" + sep + "/third",
+		},
+		{
+			name:        "empty KUBECONFIG falls back to default",
+			explicitPath: "",
+			kubeconfig:  "",
+			wantSources: clientcmd.RecommendedHomeFile,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			g := NewWithT(t)
+			t.Setenv("KUBECONFIG", tc.kubeconfig)
+			g.Expect(resolveDisplaySources(tc.explicitPath)).To(Equal(tc.wantSources))
+		})
+	}
+}
+
+func TestIsWriteTargetInSources(t *testing.T) {
+	sep := string(os.PathListSeparator)
+
+	tests := []struct {
+		name        string
+		writeTarget string
+		sources     string
+		want        bool
+	}{
+		{"single match", "/a", "/a", true},
+		{"single no match", "/b", "/a", false},
+		{"multi: first matches", "/a", "/a" + sep + "/b" + sep + "/c", true},
+		{"multi: middle matches", "/b", "/a" + sep + "/b" + sep + "/c", true},
+		{"multi: last matches", "/c", "/a" + sep + "/b" + sep + "/c", true},
+		{"multi: no match", "/d", "/a" + sep + "/b" + sep + "/c", false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			g := NewWithT(t)
+			g.Expect(isWriteTargetInSources(tc.writeTarget, tc.sources)).To(Equal(tc.want))
 		})
 	}
 }
@@ -1241,4 +1310,67 @@ func TestIncludeNotReady_BypassesEarlyReturnWhenAllNotReady(t *testing.T) {
 	// early-return logic reverts (e.g. drops the inclNotReady guard), this test fails.
 	g.Expect(shouldSkipMerge(ready, notReady, false)).To(BeTrue(), "without flag: must skip merge when all clusters not-ready")
 	g.Expect(shouldSkipMerge(ready, notReady, true)).To(BeFalse(), "with flag: must not skip merge when all clusters not-ready")
+}
+
+func TestLoadKubeconfigContext(t *testing.T) {
+	g := NewWithT(t)
+
+	// Write a temp kubeconfig with a context that has a namespace.
+	cfg := clientcmdapi.NewConfig()
+	cfg.Clusters["gh"] = &clientcmdapi.Cluster{Server: "https://greenhouse.example.com"}
+	cfg.AuthInfos["gh-user"] = &clientcmdapi.AuthInfo{}
+	cfg.Contexts["greenhouse-my-org"] = &clientcmdapi.Context{
+		Cluster:   "gh",
+		AuthInfo:  "gh-user",
+		Namespace: "my-org",
+	}
+	cfg.CurrentContext = "greenhouse-my-org"
+
+	tmpFile := filepath.Join(t.TempDir(), "kubeconfig")
+	g.Expect(clientcmd.WriteToFile(*cfg, tmpFile)).To(Succeed())
+
+	// Default context: both context name and namespace are returned.
+	activeCtx, ns, err := loadKubeconfigContext("", tmpFile)
+	g.Expect(err).ToNot(HaveOccurred())
+	g.Expect(activeCtx).To(Equal("greenhouse-my-org"))
+	g.Expect(ns).To(Equal("my-org"))
+
+	// Explicit context name works too.
+	activeCtx, ns, err = loadKubeconfigContext("greenhouse-my-org", tmpFile)
+	g.Expect(err).ToNot(HaveOccurred())
+	g.Expect(activeCtx).To(Equal("greenhouse-my-org"))
+	g.Expect(ns).To(Equal("my-org"))
+
+	// Context with no namespace returns empty namespace, no error.
+	cfg.Contexts["no-ns"] = &clientcmdapi.Context{Cluster: "gh", AuthInfo: "gh-user"}
+	g.Expect(clientcmd.WriteToFile(*cfg, tmpFile)).To(Succeed())
+	activeCtx, ns, err = loadKubeconfigContext("no-ns", tmpFile)
+	g.Expect(err).ToNot(HaveOccurred())
+	g.Expect(activeCtx).To(Equal("no-ns"))
+	g.Expect(ns).To(BeEmpty())
+}
+
+func TestSyncCmd_MissingNamespaceError(t *testing.T) {
+	g := NewWithT(t)
+
+	// A kubeconfig whose active context has no namespace — autodetect yields "".
+	cfg := clientcmdapi.NewConfig()
+	cfg.Clusters["gh"] = &clientcmdapi.Cluster{Server: "https://greenhouse.example.com"}
+	cfg.AuthInfos["gh-user"] = &clientcmdapi.AuthInfo{}
+	cfg.Contexts["ctx-no-ns"] = &clientcmdapi.Context{Cluster: "gh", AuthInfo: "gh-user"}
+	cfg.CurrentContext = "ctx-no-ns"
+	tmpFile := filepath.Join(t.TempDir(), "kubeconfig")
+	g.Expect(clientcmd.WriteToFile(*cfg, tmpFile)).To(Succeed())
+
+	// loadKubeconfigContext returns empty namespace for a context without one.
+	_, ns, err := loadKubeconfigContext("", tmpFile)
+	g.Expect(err).ToNot(HaveOccurred())
+	g.Expect(ns).To(BeEmpty(), "context without namespace must yield empty string")
+
+	// The error message produced when namespace is still "" after autodetect
+	// must mention all three resolution paths.
+	errMsg := "greenhouse organization namespace is required: set --greenhouse-cluster-namespace, add 'greenhouse-cluster-namespace: <org>' to ~/.cloudctl.yaml, or ensure the active context in your kubeconfig has a namespace set"
+	g.Expect(errMsg).To(ContainSubstring("--greenhouse-cluster-namespace"))
+	g.Expect(errMsg).To(ContainSubstring("~/.cloudctl.yaml"))
+	g.Expect(errMsg).To(ContainSubstring("namespace"))
 }

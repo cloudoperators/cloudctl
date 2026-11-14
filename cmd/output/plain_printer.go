@@ -26,6 +26,15 @@ func (p *plainPrinter) Print(v any) error {
 	case SyncResult:
 		total := t.Synced + t.Skipped + t.Failed
 
+		if t.Connection != nil {
+			w("kubeconfig: %s  context: %s  namespace: %s\n",
+				t.Connection.Kubeconfig, t.Connection.Context, t.Connection.Namespace)
+			if t.WriteTarget != "" {
+				w("writing:    %s\n", t.WriteTarget)
+			}
+			w("\n")
+		}
+
 		// List clusters that need attention first.
 		for _, c := range t.Clusters {
 			switch c.Status {
