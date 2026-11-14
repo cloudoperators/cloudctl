@@ -102,7 +102,7 @@ run "cloudctl sync" with no flags:
 
   greenhouse-cluster-namespace: my-org
   greenhouse-cluster-context: greenhouse
-  greenhouse-cluster-kubeconfig: ~/.kube/config
+  greenhouse-cluster-kubeconfig: ~/.kube/greenhouse.yaml   # tilde is expanded
 
 Examples:
   # Sync all clusters for an organization
@@ -690,6 +690,12 @@ func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdap
 	// the same generateAuthInfoKey (e.g. same OIDC flags but different non-OIDC
 	// exec args) each get their own managed-name entry and are never conflated.
 	var authInfoMap map[string]string // key: server authinfo name, value: authinfo name to use (may be unmanaged local or managed hash-based)
+
+	// skippedServerContexts holds server-side context names whose authinfo was missing
+	// at merge time. Their existing local managed entries must be preserved through
+	// the cleanup pass rather than deleted as "stale".
+	skippedServerContexts := make(map[string]struct{})
+
 	if mergeIdenticalUsers {
 		authInfoMap = make(map[string]string)
 
@@ -814,6 +820,7 @@ func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdap
 				serverAuth, exists := serverConfig.AuthInfos[serverAuthName]
 				if !exists || serverAuth == nil {
 					slog.Debug("skipping context: authinfo missing from server config", "context", serverName, "authinfo", serverAuthName)
+					skippedServerContexts[serverName] = struct{}{}
 					continue
 				}
 				uniqueKey := generateAuthInfoKey(serverAuth)
@@ -834,6 +841,7 @@ func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdap
 				// a context pointing at a missing authinfo would produce a broken kubeconfig entry.
 				if _, exists := serverConfig.AuthInfos[serverCtx.AuthInfo]; !exists {
 					slog.Debug("skipping context: authinfo missing from server config", "context", serverName, "authinfo", serverCtx.AuthInfo)
+					skippedServerContexts[serverName] = struct{}{}
 					continue
 				}
 				managedAuthInfoName = managedNameFunc(serverCtx.AuthInfo)
@@ -928,6 +936,12 @@ func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdap
 				serverAuthName := serverCtx.AuthInfo
 				mappedName, exists := authInfoMap[serverAuthName]
 				if !exists {
+					// If the context was explicitly skipped due to a missing authinfo,
+					// preserve the existing local entry rather than deleting it.
+					if _, skipped := skippedServerContexts[serverName]; skipped {
+						slog.Debug("preserving local context: authinfo was missing at merge time", "name", localName)
+						continue
+					}
 					slog.Debug("removing stale context (unmapped authinfo)", "name", localName)
 					delete(localConfig.Contexts, localName)
 					continue

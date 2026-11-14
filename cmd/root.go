@@ -94,15 +94,30 @@ func init() {
 // viperKey is the viper key for the flag (e.g. "kubeconfig", "greenhouse-cluster-kubeconfig").
 // When the key was not explicitly set by the user (via flag, CLOUDCTL_* env var, or config file)
 // and the standard KUBECONFIG env var is set, it returns "" so that client-go uses its standard
-// multi-file loading rules. An explicitly provided value is always returned as-is.
+// multi-file loading rules. An explicitly provided value is always returned as-is, after tilde
+// expansion (a leading "~/" is replaced with the user's home directory so that values read from
+// ~/.cloudctl.yaml work without shell expansion).
 func resolveKubeconfig(viperKey, flagValue string) string {
 	if viper.IsSet(viperKey) {
-		return flagValue
+		return expandTilde(flagValue)
 	}
 	if os.Getenv("KUBECONFIG") != "" {
 		return ""
 	}
-	return flagValue
+	return expandTilde(flagValue)
+}
+
+// expandTilde replaces a leading "~/" with the current user's home directory.
+// Paths that do not start with "~/" are returned unchanged.
+func expandTilde(path string) string {
+	if !strings.HasPrefix(path, "~/") {
+		return path
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return path
+	}
+	return filepath.Join(home, path[2:])
 }
 
 // displayKubeconfig returns a human-readable label for the effective kubeconfig source.
