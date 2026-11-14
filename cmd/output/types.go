@@ -22,10 +22,20 @@ type ClusterSyncResult struct {
 
 // SyncResult is the top-level output of the sync command.
 type SyncResult struct {
-	Clusters []ClusterSyncResult `json:"clusters" yaml:"clusters"`
-	Synced   int                 `json:"synced"   yaml:"synced"`
-	Skipped  int                 `json:"skipped"  yaml:"skipped"`
-	Failed   int                 `json:"failed"   yaml:"failed"`
+	// Connection describes where the sync connected to (shown in text output header).
+	Connection  *SyncConnection     `json:"connection,omitempty" yaml:"connection,omitempty"`
+	Clusters    []ClusterSyncResult `json:"clusters"             yaml:"clusters"`
+	Synced      int                 `json:"synced"               yaml:"synced"`
+	Skipped     int                 `json:"skipped"              yaml:"skipped"`
+	Failed      int                 `json:"failed"               yaml:"failed"`
+	WriteTarget string              `json:"writeTarget,omitempty" yaml:"writeTarget,omitempty"`
+}
+
+// SyncConnection holds the resolved Greenhouse connection details used for a sync.
+type SyncConnection struct {
+	Kubeconfig string `json:"kubeconfig" yaml:"kubeconfig"`
+	Context    string `json:"context"    yaml:"context"`
+	Namespace  string `json:"namespace"  yaml:"namespace"`
 }
 
 // ClusterVersionResult is the output of the cluster-version command.

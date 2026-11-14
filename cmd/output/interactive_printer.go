@@ -179,6 +179,18 @@ func (p *interactivePrinter) printSyncResult(r SyncResult) error {
 	}
 	total := r.Synced + r.Skipped + r.Failed
 
+	if r.Connection != nil {
+		w("%s %s  %s %s  %s %s\n",
+			styleFaint.Render("kubeconfig:"), r.Connection.Kubeconfig,
+			styleFaint.Render("context:"), styleBold.Render(r.Connection.Context),
+			styleFaint.Render("namespace:"), styleBold.Render(r.Connection.Namespace),
+		)
+		if r.WriteTarget != "" {
+			w("%s %s\n", styleFaint.Render("writing:  "), r.WriteTarget)
+		}
+		w("\n")
+	}
+
 	// Collect only clusters that need attention.
 	var issues []ClusterSyncResult
 	for _, c := range r.Clusters {
