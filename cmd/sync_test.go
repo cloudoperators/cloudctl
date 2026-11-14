@@ -1056,6 +1056,75 @@ func TestWriteTargetFromKUBECONFIG(t *testing.T) {
 	}
 }
 
+func TestResolveDisplaySources(t *testing.T) {
+	sep := string(os.PathListSeparator)
+
+	tests := []struct {
+		name           string
+		explicitPath   string
+		kubeconfig     string
+		wantSources    string
+	}{
+		{
+			name:        "explicit path returned as-is",
+			explicitPath: "/explicit/kubeconfig",
+			kubeconfig:  "/env/kubeconfig",
+			wantSources: "/explicit/kubeconfig",
+		},
+		{
+			name:        "single KUBECONFIG entry returned as-is",
+			explicitPath: "",
+			kubeconfig:  "/single/kubeconfig",
+			wantSources: "/single/kubeconfig",
+		},
+		{
+			name:        "multi-file KUBECONFIG: full list returned",
+			explicitPath: "",
+			kubeconfig:  "/first" + sep + "/second" + sep + "/third",
+			wantSources: "/first" + sep + "/second" + sep + "/third",
+		},
+		{
+			name:        "empty KUBECONFIG falls back to default",
+			explicitPath: "",
+			kubeconfig:  "",
+			wantSources: clientcmd.RecommendedHomeFile,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			g := NewWithT(t)
+			t.Setenv("KUBECONFIG", tc.kubeconfig)
+			g.Expect(resolveDisplaySources(tc.explicitPath)).To(Equal(tc.wantSources))
+		})
+	}
+}
+
+func TestIsWriteTargetInSources(t *testing.T) {
+	sep := string(os.PathListSeparator)
+
+	tests := []struct {
+		name        string
+		writeTarget string
+		sources     string
+		want        bool
+	}{
+		{"single match", "/a", "/a", true},
+		{"single no match", "/b", "/a", false},
+		{"multi: first matches", "/a", "/a" + sep + "/b" + sep + "/c", true},
+		{"multi: middle matches", "/b", "/a" + sep + "/b" + sep + "/c", true},
+		{"multi: last matches", "/c", "/a" + sep + "/b" + sep + "/c", true},
+		{"multi: no match", "/d", "/a" + sep + "/b" + sep + "/c", false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			g := NewWithT(t)
+			g.Expect(isWriteTargetInSources(tc.writeTarget, tc.sources)).To(Equal(tc.want))
+		})
+	}
+}
+
 func TestInjectNotReadyStubs_PreservesLocalEntries(t *testing.T) {
 	g := NewWithT(t)
 

@@ -190,7 +190,7 @@ func runSync(cmd *cobra.Command, args []string) error {
 	}
 
 	conn := &output.SyncConnection{
-		Kubeconfig: resolveDisplayPath(greenhouseClusterKubeconfig),
+		Kubeconfig: resolveDisplaySources(greenhouseClusterKubeconfig),
 		Context:    greenhouseClusterContext,
 		Namespace:  greenhouseClusterNamespace,
 	}
@@ -345,9 +345,10 @@ func runSync(cmd *cobra.Command, args []string) error {
 
 	r := buildSyncResult(merged, skipped)
 	r.Connection = conn
-	// Only show write target when it differs from the greenhouse kubeconfig source,
-	// to avoid printing the same path twice.
-	if writeTarget != conn.Kubeconfig {
+	// Show write target only when it is not already expressed by conn.Kubeconfig.
+	// For a single path they are equal; for a multi-file KUBECONFIG list the write
+	// target (first entry) is a subset of the list, so we check containment.
+	if !isWriteTargetInSources(writeTarget, conn.Kubeconfig) {
 		r.WriteTarget = writeTarget
 	}
 	return printer.Print(r)
@@ -1013,17 +1014,29 @@ func resolveWriteTarget(remoteKubeconfig string) (string, error) {
 	return clientcmd.RecommendedHomeFile, nil
 }
 
-// resolveDisplayPath returns the concrete file path for the effective kubeconfig.
-// When kubeconfigPath is empty (KUBECONFIG env or default), it resolves to the
-// first KUBECONFIG entry or ~/.kube/config — the same path that would be read.
-// Delegates to resolveWriteTarget so the resolution logic stays in one place.
-func resolveDisplayPath(kubeconfigPath string) string {
+// resolveDisplaySources returns the kubeconfig source description for the connection header.
+// When kubeconfigPath is explicit it is returned as-is. When KUBECONFIG is set the full
+// colon-separated list is returned so multi-file setups are not misrepresented. Otherwise
+// ~/.kube/config is returned.
+func resolveDisplaySources(kubeconfigPath string) string {
 	if kubeconfigPath != "" {
 		return kubeconfigPath
 	}
-	// resolveWriteTarget never returns an error when kubeconfigPath is "".
-	p, _ := resolveWriteTarget("")
-	return p
+	if kc := os.Getenv("KUBECONFIG"); kc != "" {
+		return kc
+	}
+	return clientcmd.RecommendedHomeFile
+}
+
+// isWriteTargetInSources reports whether writeTarget is already represented by the
+// sources string (which may be a single path or a colon-separated list).
+func isWriteTargetInSources(writeTarget, sources string) bool {
+	for _, p := range strings.Split(sources, string(os.PathListSeparator)) {
+		if p == writeTarget {
+			return true
+		}
+	}
+	return false
 }
 
 // loadKubeconfigContext resolves the active context name and its namespace from
