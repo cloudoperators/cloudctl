@@ -695,6 +695,11 @@ func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdap
 	// at merge time. Their existing local managed entries must be preserved through
 	// the cleanup pass rather than deleted as "stale".
 	skippedServerContexts := make(map[string]struct{})
+	// preservedAuthInfos and preservedClusters hold the local managed names referenced
+	// by skipped contexts. They must survive the authinfo/cluster cleanup passes even
+	// though they are not present in serverConfig or authInfoMap.
+	preservedAuthInfos := make(map[string]struct{})
+	preservedClusters := make(map[string]struct{})
 
 	if mergeIdenticalUsers {
 		authInfoMap = make(map[string]string)
@@ -821,6 +826,10 @@ func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdap
 				if !exists || serverAuth == nil {
 					slog.Debug("skipping context: authinfo missing from server config", "context", serverName, "authinfo", serverAuthName)
 					skippedServerContexts[serverName] = struct{}{}
+					if localCtx, ok := localConfig.Contexts[serverName]; ok && localCtx != nil {
+						preservedAuthInfos[localCtx.AuthInfo] = struct{}{}
+						preservedClusters[localCtx.Cluster] = struct{}{}
+					}
 					continue
 				}
 				uniqueKey := generateAuthInfoKey(serverAuth)
@@ -842,6 +851,10 @@ func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdap
 				if _, exists := serverConfig.AuthInfos[serverCtx.AuthInfo]; !exists {
 					slog.Debug("skipping context: authinfo missing from server config", "context", serverName, "authinfo", serverCtx.AuthInfo)
 					skippedServerContexts[serverName] = struct{}{}
+					if localCtx, ok := localConfig.Contexts[serverName]; ok && localCtx != nil {
+						preservedAuthInfos[localCtx.AuthInfo] = struct{}{}
+						preservedClusters[localCtx.Cluster] = struct{}{}
+					}
 					continue
 				}
 				managedAuthInfoName = managedNameFunc(serverCtx.AuthInfo)
@@ -874,6 +887,9 @@ func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdap
 	// Delete managed Clusters not present in serverConfig
 	for localName := range localConfig.Clusters {
 		if isManaged(localName) {
+			if _, preserved := preservedClusters[localName]; preserved {
+				continue
+			}
 			// Derive the server-side name by stripping the prefix
 			serverName := unmanagedNameFunc(localName)
 			if _, exists := serverConfig.Clusters[serverName]; !exists {
@@ -886,6 +902,9 @@ func mergeKubeconfig(localConfig *clientcmdapi.Config, serverConfig *clientcmdap
 	// Delete managed AuthInfos not present in serverConfig
 	for localName := range localConfig.AuthInfos {
 		if isManaged(localName) {
+			if _, preserved := preservedAuthInfos[localName]; preserved {
+				continue
+			}
 			if mergeIdenticalUsers {
 				// If merging, keep AuthInfos that are mapped
 				found := false
