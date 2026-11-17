@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -19,19 +20,23 @@ import (
 )
 
 var (
-	bootstrapData          string
-	bootstrapServer        string
-	bootstrapOrg           string
-	bootstrapCAData        string
-	bootstrapIDPIssuerURL  string
-	bootstrapClientID      string
-	bootstrapClientSecret  string
-	bootstrapExtraScopes   string
-	bootstrapNamespace     string
-	bootstrapKubeconfig    string
-	bootstrapContextName   string
-	bootstrapSetCurrentCtx bool
-	bootstrapDryRun        bool
+	bootstrapData             string
+	bootstrapServer           string
+	bootstrapOrg              string
+	bootstrapCAData           string
+	bootstrapIDPIssuerURL     string
+	bootstrapClientID         string
+	bootstrapClientSecret     string
+	bootstrapExtraScopes      string
+	bootstrapNamespace        string
+	bootstrapKubeconfig       string
+	bootstrapContextName      string
+	bootstrapSetCurrentCtx    bool
+	bootstrapDryRun           bool
+	bootstrapAuthType         string
+	bootstrapKubeloginPath    string
+	bootstrapKubeloginArgs    []string
+	bootstrapTokenCacheDir    string
 )
 
 func init() {
@@ -48,6 +53,23 @@ func init() {
 	bootstrapCmd.Flags().StringVar(&bootstrapContextName, "context-name", "", "Context name to use in the local kubeconfig (default: from the downloaded kubeconfig or greenhouse-<org>)")
 	bootstrapCmd.Flags().BoolVar(&bootstrapSetCurrentCtx, "set-current-context", false, "Set the bootstrapped context as the current context")
 	bootstrapCmd.Flags().BoolVar(&bootstrapDryRun, "dry-run", false, "Preview what would be written without touching the kubeconfig file")
+
+	// Auth flags — mirror sync's interface so the same values work for both commands.
+	bootstrapCmd.Flags().StringVar(&bootstrapAuthType, "auth-type", "exec-plugin", "Auth credential style for the Greenhouse kubeconfig: exec-plugin (kubelogin) or auth-provider (legacy)")
+	bootstrapCmd.Flags().StringVar(&bootstrapKubeloginPath, "kubelogin-path", "kubelogin", "Path to the kubelogin binary (used with --auth-type=exec-plugin)")
+	bootstrapCmd.Flags().StringSliceVar(&bootstrapKubeloginArgs, "kubelogin-extra-args", nil, "Additional arguments passed to the kubelogin exec plugin")
+	defaultTokenCacheDir := os.Getenv("HOME")
+	if defaultTokenCacheDir == "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			defaultTokenCacheDir = home
+		}
+	}
+	if defaultTokenCacheDir != "" {
+		defaultTokenCacheDir = filepath.Join(defaultTokenCacheDir, ".kube", "cache", "oidc-login")
+	} else {
+		defaultTokenCacheDir = filepath.Join("~", ".kube", "cache", "oidc-login")
+	}
+	bootstrapCmd.Flags().StringVar(&bootstrapTokenCacheDir, "kubelogin-token-cache-dir", defaultTokenCacheDir, "Directory for OIDC token cache files (used with --auth-type=exec-plugin)")
 
 	_ = viper.BindPFlags(bootstrapCmd.Flags())
 
@@ -142,6 +164,16 @@ func runBootstrap(cmd *cobra.Command, args []string) error {
 	} else {
 		bootstrapDryRun = false
 	}
+	if cmd.Flags().Changed("auth-type") {
+		bootstrapAuthType, _ = cmd.Flags().GetString("auth-type")
+	} else if viper.IsSet("auth-type") {
+		bootstrapAuthType = viper.GetString("auth-type")
+	} else {
+		bootstrapAuthType = "exec-plugin"
+	}
+	bootstrapKubeloginPath = viper.GetString("kubelogin-path")
+	bootstrapKubeloginArgs = viper.GetStringSlice("kubelogin-extra-args")
+	bootstrapTokenCacheDir = viper.GetString("kubelogin-token-cache-dir")
 
 	format, err := output.ParseFormat(viper.GetString("output"))
 	if err != nil {
@@ -300,26 +332,20 @@ func resolveIncomingKubeconfig() (*clientcmdapi.Config, string, error) {
 		return nil, "", fmt.Errorf("--greenhouse-client-id is required when not using --data")
 	}
 
-	cfg, err := buildOIDCKubeconfig(bootstrapServer, bootstrapOrg, bootstrapCAData, bootstrapIDPIssuerURL, bootstrapClientID, bootstrapClientSecret, bootstrapExtraScopes, bootstrapNamespace)
+	if err := validateAuthType(bootstrapAuthType, bootstrapKubeloginPath); err != nil {
+		return nil, "", err
+	}
+
+	cfg, err := buildOIDCKubeconfig(bootstrapServer, bootstrapOrg, bootstrapCAData, bootstrapIDPIssuerURL, bootstrapClientID, bootstrapClientSecret, bootstrapExtraScopes, bootstrapNamespace, bootstrapAuthType, bootstrapKubeloginPath, bootstrapKubeloginArgs, bootstrapTokenCacheDir)
 	if err != nil {
 		return nil, "", err
 	}
 	return cfg, bootstrapOrg, nil
 }
 
-// buildOIDCKubeconfig constructs a kubeconfig matching the Greenhouse auth-provider shape:
-//
-//	users:
-//	- name: greenhouse-<org>
-//	  user:
-//	    auth-provider:
-//	      name: oidc
-//	      config:
-//	        idp-issuer-url: ...
-//	        client-id: ...
-//	        client-secret: ...   (always present; may be empty string)
-//	        extra-scopes: ...    (omitted when empty)
-func buildOIDCKubeconfig(server, org, caDataB64, idpIssuerURL, clientID, clientSecret, extraScopes, namespace string) (*clientcmdapi.Config, error) {
+// buildOIDCKubeconfig constructs a Greenhouse kubeconfig using either the exec-plugin
+// (kubelogin) or the legacy auth-provider format, controlled by authType.
+func buildOIDCKubeconfig(server, org, caDataB64, idpIssuerURL, clientID, clientSecret, extraScopes, namespace, authType, kubeloginPath string, kubeloginExtraArgs []string, tokenCacheDir string) (*clientcmdapi.Config, error) {
 	name := fmt.Sprintf("greenhouse-%s", org)
 
 	cluster := &clientcmdapi.Cluster{Server: server}
@@ -348,14 +374,28 @@ func buildOIDCKubeconfig(server, org, caDataB64, idpIssuerURL, clientID, clientS
 		ns = org
 	}
 
+	var authInfo *clientcmdapi.AuthInfo
+	if strings.EqualFold(authType, "exec-plugin") {
+		authInfo = &clientcmdapi.AuthInfo{
+			Exec: &clientcmdapi.ExecConfig{
+				APIVersion:      "client.authentication.k8s.io/v1",
+				Command:         kubeloginPath,
+				Args:            buildKubeloginArgs(oidcConfig, kubeloginExtraArgs, tokenCacheDir),
+				InteractiveMode: clientcmdapi.IfAvailableExecInteractiveMode,
+			},
+		}
+	} else {
+		authInfo = &clientcmdapi.AuthInfo{
+			AuthProvider: &clientcmdapi.AuthProviderConfig{
+				Name:   "oidc",
+				Config: oidcConfig,
+			},
+		}
+	}
+
 	cfg := clientcmdapi.NewConfig()
 	cfg.Clusters[name] = cluster
-	cfg.AuthInfos[name] = &clientcmdapi.AuthInfo{
-		AuthProvider: &clientcmdapi.AuthProviderConfig{
-			Name:   "oidc",
-			Config: oidcConfig,
-		},
-	}
+	cfg.AuthInfos[name] = authInfo
 	cfg.Contexts[name] = &clientcmdapi.Context{
 		Cluster:   name,
 		AuthInfo:  name,
