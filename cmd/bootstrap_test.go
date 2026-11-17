@@ -498,7 +498,8 @@ func TestResolveIncomingKubeconfig_DataBlob(t *testing.T) {
 	want := realGreenhouseKubeconfig("sap-cna")
 	bootstrapData = encodeKubeconfig(t, want)
 	bootstrapOrg = ""
-	t.Cleanup(func() { bootstrapData = ""; bootstrapOrg = "" })
+	bootstrapAuthType = "auth-provider"
+	t.Cleanup(func() { bootstrapData = ""; bootstrapOrg = ""; bootstrapAuthType = "" })
 
 	cfg, org, err := resolveIncomingKubeconfig()
 	g.Expect(err).To(BeNil())
@@ -510,13 +511,42 @@ func TestResolveIncomingKubeconfig_DataBlob(t *testing.T) {
 	g.Expect(cfg.Contexts["greenhouse-sap-cna"].Namespace).To(Equal("sap-cna"))
 }
 
+func TestResolveIncomingKubeconfig_DataBlobExecPlugin(t *testing.T) {
+	g := NewWithT(t)
+
+	want := realGreenhouseKubeconfig("sap-cna")
+	bootstrapData = encodeKubeconfig(t, want)
+	bootstrapOrg = ""
+	bootstrapAuthType = "exec-plugin"
+	bootstrapKubeloginPath = "kubelogin"
+	bootstrapKubeloginArgs = nil
+	bootstrapTokenCacheDir = "/tmp/token-cache"
+	t.Cleanup(func() {
+		bootstrapData = ""
+		bootstrapOrg = ""
+		bootstrapAuthType = ""
+		bootstrapKubeloginPath = ""
+		bootstrapKubeloginArgs = nil
+		bootstrapTokenCacheDir = ""
+	})
+
+	cfg, _, err := resolveIncomingKubeconfig()
+	g.Expect(err).To(BeNil())
+	ai := cfg.AuthInfos["greenhouse-sap-cna"]
+	g.Expect(ai.AuthProvider).To(BeNil())
+	g.Expect(ai.Exec).NotTo(BeNil())
+	g.Expect(ai.Exec.Command).To(Equal("kubelogin"))
+	g.Expect(ai.Exec.Args).To(ContainElement("--oidc-issuer-url=https://idp.global.cloud.sap"))
+}
+
 func TestResolveIncomingKubeconfig_DataBlobWithOrgOverride(t *testing.T) {
 	g := NewWithT(t)
 
 	want := realGreenhouseKubeconfig("sap-cna")
 	bootstrapData = encodeKubeconfig(t, want)
 	bootstrapOrg = "override-org"
-	t.Cleanup(func() { bootstrapData = ""; bootstrapOrg = "" })
+	bootstrapAuthType = "auth-provider"
+	t.Cleanup(func() { bootstrapData = ""; bootstrapOrg = ""; bootstrapAuthType = "" })
 
 	_, org, err := resolveIncomingKubeconfig()
 	g.Expect(err).To(BeNil())
@@ -696,6 +726,7 @@ func TestBootstrapCmd_DataBlob_WritesCorrectKubeconfig(t *testing.T) {
 		"--data=" + data,
 		"--context-name=greenhouse-sap-cna",
 		"--set-current-context",
+		"--auth-type=auth-provider",
 		"--kubeconfig=" + dest,
 	})
 	g.Expect(err).To(BeNil())
@@ -792,6 +823,7 @@ func TestBootstrapCmd_IndividualFlags_DataAndIndividualFlagsProduceSameShape(t *
 	_, _, err = runBootstrapCmd(t, []string{
 		"--data=" + data,
 		"--context-name=greenhouse-sap-cna",
+		"--auth-type=auth-provider",
 		"--kubeconfig=" + dest2,
 	})
 	g.Expect(err).To(BeNil())

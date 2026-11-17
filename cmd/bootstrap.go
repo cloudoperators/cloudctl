@@ -8,7 +8,6 @@ import (
 	"encoding/base64"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -20,23 +19,23 @@ import (
 )
 
 var (
-	bootstrapData             string
-	bootstrapServer           string
-	bootstrapOrg              string
-	bootstrapCAData           string
-	bootstrapIDPIssuerURL     string
-	bootstrapClientID         string
-	bootstrapClientSecret     string
-	bootstrapExtraScopes      string
-	bootstrapNamespace        string
-	bootstrapKubeconfig       string
-	bootstrapContextName      string
-	bootstrapSetCurrentCtx    bool
-	bootstrapDryRun           bool
-	bootstrapAuthType         string
-	bootstrapKubeloginPath    string
-	bootstrapKubeloginArgs    []string
-	bootstrapTokenCacheDir    string
+	bootstrapData          string
+	bootstrapServer        string
+	bootstrapOrg           string
+	bootstrapCAData        string
+	bootstrapIDPIssuerURL  string
+	bootstrapClientID      string
+	bootstrapClientSecret  string
+	bootstrapExtraScopes   string
+	bootstrapNamespace     string
+	bootstrapKubeconfig    string
+	bootstrapContextName   string
+	bootstrapSetCurrentCtx bool
+	bootstrapDryRun        bool
+	bootstrapAuthType      string
+	bootstrapKubeloginPath string
+	bootstrapKubeloginArgs []string
+	bootstrapTokenCacheDir string
 )
 
 func init() {
@@ -58,18 +57,7 @@ func init() {
 	bootstrapCmd.Flags().StringVar(&bootstrapAuthType, "auth-type", "exec-plugin", "Auth credential style for the Greenhouse kubeconfig: exec-plugin (kubelogin) or auth-provider (legacy)")
 	bootstrapCmd.Flags().StringVar(&bootstrapKubeloginPath, "kubelogin-path", "kubelogin", "Path to the kubelogin binary (used with --auth-type=exec-plugin)")
 	bootstrapCmd.Flags().StringSliceVar(&bootstrapKubeloginArgs, "kubelogin-extra-args", nil, "Additional arguments passed to the kubelogin exec plugin")
-	defaultTokenCacheDir := os.Getenv("HOME")
-	if defaultTokenCacheDir == "" {
-		if home, err := os.UserHomeDir(); err == nil {
-			defaultTokenCacheDir = home
-		}
-	}
-	if defaultTokenCacheDir != "" {
-		defaultTokenCacheDir = filepath.Join(defaultTokenCacheDir, ".kube", "cache", "oidc-login")
-	} else {
-		defaultTokenCacheDir = filepath.Join("~", ".kube", "cache", "oidc-login")
-	}
-	bootstrapCmd.Flags().StringVar(&bootstrapTokenCacheDir, "kubelogin-token-cache-dir", defaultTokenCacheDir, "Directory for OIDC token cache files (used with --auth-type=exec-plugin)")
+	bootstrapCmd.Flags().StringVar(&bootstrapTokenCacheDir, "kubelogin-token-cache-dir", defaultOIDCTokenCacheDir(), "Directory for OIDC token cache files (used with --auth-type=exec-plugin)")
 
 	_ = viper.BindPFlags(bootstrapCmd.Flags())
 
@@ -171,9 +159,27 @@ func runBootstrap(cmd *cobra.Command, args []string) error {
 	} else {
 		bootstrapAuthType = "exec-plugin"
 	}
-	bootstrapKubeloginPath = viper.GetString("kubelogin-path")
-	bootstrapKubeloginArgs = viper.GetStringSlice("kubelogin-extra-args")
-	bootstrapTokenCacheDir = viper.GetString("kubelogin-token-cache-dir")
+	if cmd.Flags().Changed("kubelogin-path") {
+		bootstrapKubeloginPath, _ = cmd.Flags().GetString("kubelogin-path")
+	} else if viper.IsSet("kubelogin-path") {
+		bootstrapKubeloginPath = viper.GetString("kubelogin-path")
+	} else {
+		bootstrapKubeloginPath = "kubelogin"
+	}
+	if cmd.Flags().Changed("kubelogin-extra-args") {
+		bootstrapKubeloginArgs, _ = cmd.Flags().GetStringSlice("kubelogin-extra-args")
+	} else if viper.IsSet("kubelogin-extra-args") {
+		bootstrapKubeloginArgs = viper.GetStringSlice("kubelogin-extra-args")
+	} else {
+		bootstrapKubeloginArgs = nil
+	}
+	if cmd.Flags().Changed("kubelogin-token-cache-dir") {
+		bootstrapTokenCacheDir, _ = cmd.Flags().GetString("kubelogin-token-cache-dir")
+	} else if viper.IsSet("kubelogin-token-cache-dir") {
+		bootstrapTokenCacheDir = viper.GetString("kubelogin-token-cache-dir")
+	} else {
+		bootstrapTokenCacheDir = defaultOIDCTokenCacheDir()
+	}
 
 	format, err := output.ParseFormat(viper.GetString("output"))
 	if err != nil {
@@ -314,6 +320,22 @@ func resolveIncomingKubeconfig() (*clientcmdapi.Config, string, error) {
 			return nil, "", fmt.Errorf("--data kubeconfig context %q references unknown cluster %q", activeCtx, ctx.Cluster)
 		} else if _, aiOK := cfg.AuthInfos[ctx.AuthInfo]; !aiOK {
 			return nil, "", fmt.Errorf("--data kubeconfig context %q references unknown user %q", activeCtx, ctx.AuthInfo)
+		}
+		if strings.EqualFold(bootstrapAuthType, "exec-plugin") {
+			if err := validateAuthType(bootstrapAuthType, bootstrapKubeloginPath); err != nil {
+				return nil, "", err
+			}
+			for _, ai := range cfg.AuthInfos {
+				if ai.AuthProvider != nil && ai.AuthProvider.Name == "oidc" {
+					ai.Exec = &clientcmdapi.ExecConfig{
+						APIVersion:      "client.authentication.k8s.io/v1",
+						Command:         bootstrapKubeloginPath,
+						Args:            buildKubeloginArgs(ai.AuthProvider.Config, bootstrapKubeloginArgs, bootstrapTokenCacheDir),
+						InteractiveMode: clientcmdapi.IfAvailableExecInteractiveMode,
+					}
+					ai.AuthProvider = nil
+				}
+			}
 		}
 		return cfg, bootstrapOrg, nil
 	}
