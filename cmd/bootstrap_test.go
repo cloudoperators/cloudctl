@@ -518,7 +518,7 @@ func TestResolveIncomingKubeconfig_DataBlobExecPlugin(t *testing.T) {
 	bootstrapData = encodeKubeconfig(t, want)
 	bootstrapOrg = ""
 	bootstrapAuthType = "exec-plugin"
-	bootstrapKubeloginPath = "kubelogin"
+	bootstrapKubeloginPath = "go" // use a binary that exists in CI
 	bootstrapKubeloginArgs = nil
 	bootstrapTokenCacheDir = "/tmp/token-cache"
 	t.Cleanup(func() {
@@ -535,7 +535,7 @@ func TestResolveIncomingKubeconfig_DataBlobExecPlugin(t *testing.T) {
 	ai := cfg.AuthInfos["greenhouse-sap-cna"]
 	g.Expect(ai.AuthProvider).To(BeNil())
 	g.Expect(ai.Exec).NotTo(BeNil())
-	g.Expect(ai.Exec.Command).To(Equal("kubelogin"))
+	g.Expect(ai.Exec.Command).To(Equal("go"))
 	g.Expect(ai.Exec.Args).To(ContainElement("--oidc-issuer-url=https://idp.global.cloud.sap"))
 }
 
@@ -861,6 +861,7 @@ func TestBootstrapCmd_DryRun_DoesNotWriteFile(t *testing.T) {
 		"--context-name=greenhouse-sap-cna",
 		"--kubeconfig=" + dest,
 		"--dry-run",
+		"--auth-type=auth-provider",
 	})
 	g.Expect(err).To(BeNil())
 	g.Expect(stdout).To(ContainSubstring("Dry-run"))
@@ -882,6 +883,7 @@ func TestBootstrapCmd_Idempotent(t *testing.T) {
 		"--data=" + data,
 		"--context-name=greenhouse-sap-cna",
 		"--kubeconfig=" + dest,
+		"--auth-type=auth-provider",
 	}
 
 	_, _, err := runBootstrapCmd(t, args)
