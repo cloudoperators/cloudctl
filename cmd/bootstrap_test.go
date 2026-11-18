@@ -909,6 +909,7 @@ func TestBootstrapCmd_ContextRename(t *testing.T) {
 		"--data=" + data,
 		"--context-name=gh-prod", // user picks a custom name
 		"--set-current-context",
+		"--auth-type=auth-provider",
 		"--kubeconfig=" + dest,
 	})
 	g.Expect(err).To(BeNil())
@@ -940,6 +941,7 @@ func TestBootstrapCmd_PreservesExistingUnmanagedEntries(t *testing.T) {
 	_, _, err := runBootstrapCmd(t, []string{
 		"--data=" + data,
 		"--context-name=greenhouse-sap-cna",
+		"--auth-type=auth-provider",
 		"--kubeconfig=" + dest,
 	})
 	g.Expect(err).To(BeNil())
@@ -965,6 +967,7 @@ func TestBootstrapCmd_CreatesKubeconfigFileWhenAbsent(t *testing.T) {
 	_, _, err := runBootstrapCmd(t, []string{
 		"--data=" + data,
 		"--context-name=greenhouse-sap-cna",
+		"--auth-type=auth-provider",
 		"--kubeconfig=" + dest,
 	})
 	g.Expect(err).To(BeNil())
@@ -984,6 +987,7 @@ func TestBootstrapCmd_JSONOutput(t *testing.T) {
 	stdout, _, err := runBootstrapCmd(t, []string{
 		"--data=" + data,
 		"--context-name=greenhouse-sap-cna",
+		"--auth-type=auth-provider",
 		"--kubeconfig=" + dest,
 		"-o", "json",
 	})
@@ -1019,6 +1023,7 @@ func TestBootstrapCmd_RawBase64Encoding(t *testing.T) {
 	_, _, err = runBootstrapCmd(t, []string{
 		"--data=" + data,
 		"--context-name=greenhouse-sap-cna",
+		"--auth-type=auth-provider",
 		"--kubeconfig=" + dest,
 	})
 	g.Expect(err).To(BeNil())
