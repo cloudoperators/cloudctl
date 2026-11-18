@@ -105,6 +105,10 @@ func runBootstrapCmd(t *testing.T, args []string) (stdout, stderr string, err er
 	bootstrapContextName = ""
 	bootstrapSetCurrentCtx = false
 	bootstrapDryRun = false
+	bootstrapAuthType = ""
+	bootstrapKubeloginPath = ""
+	bootstrapKubeloginArgs = nil
+	bootstrapTokenCacheDir = ""
 
 	// Reset cobra's "Changed" state on bootstrapCmd flags so flag.Changed() is
 	// accurate for each test regardless of what previous tests passed.
@@ -140,6 +144,7 @@ func TestBuildOIDCKubeconfig_AllFields(t *testing.T) {
 		"secret123",
 		"groups",
 		"",
+		"auth-provider", "", nil, "",
 	)
 	g.Expect(err).To(BeNil())
 
@@ -167,11 +172,40 @@ func TestBuildOIDCKubeconfig_AllFields(t *testing.T) {
 	g.Expect(ctx.Namespace).To(Equal("my-org")) // defaults to org
 }
 
+func TestBuildOIDCKubeconfig_ExecPlugin(t *testing.T) {
+	g := NewWithT(t)
+
+	cfg, err := buildOIDCKubeconfig(
+		"https://greenhouse.example.com",
+		"my-org",
+		"",
+		"https://idp.example.com",
+		"greenhouse",
+		"",
+		"groups",
+		"",
+		"exec-plugin", "kubelogin", nil, "/tmp/token-cache",
+	)
+	g.Expect(err).To(BeNil())
+
+	name := "greenhouse-my-org"
+	ai := cfg.AuthInfos[name]
+	g.Expect(ai).NotTo(BeNil())
+	g.Expect(ai.AuthProvider).To(BeNil())
+	g.Expect(ai.Exec).NotTo(BeNil())
+	g.Expect(ai.Exec.Command).To(Equal("kubelogin"))
+	g.Expect(ai.Exec.Args).To(ContainElement("--oidc-issuer-url=https://idp.example.com"))
+	g.Expect(ai.Exec.Args).To(ContainElement("--oidc-client-id=greenhouse"))
+	g.Expect(ai.Exec.Args).To(ContainElement("--oidc-extra-scope=groups"))
+	g.Expect(ai.Exec.APIVersion).To(Equal("client.authentication.k8s.io/v1"))
+}
+
 func TestBuildOIDCKubeconfig_ExplicitNamespace(t *testing.T) {
 	g := NewWithT(t)
 	cfg, err := buildOIDCKubeconfig(
 		"https://greenhouse.example.com", "my-org", "",
 		"https://idp.example.com", "greenhouse", "", "", "custom-ns",
+		"auth-provider", "", nil, "",
 	)
 	g.Expect(err).To(BeNil())
 	g.Expect(cfg.Contexts["greenhouse-my-org"].Namespace).To(Equal("custom-ns"))
@@ -182,6 +216,7 @@ func TestBuildOIDCKubeconfig_NoExtraScopes(t *testing.T) {
 	cfg, err := buildOIDCKubeconfig(
 		"https://greenhouse.example.com", "my-org", "",
 		"https://idp.example.com", "greenhouse", "", "", "",
+		"auth-provider", "", nil, "",
 	)
 	g.Expect(err).To(BeNil())
 	_, hasScopes := cfg.AuthInfos["greenhouse-my-org"].AuthProvider.Config["extra-scopes"]
@@ -193,6 +228,7 @@ func TestBuildOIDCKubeconfig_InvalidCAData(t *testing.T) {
 	_, err := buildOIDCKubeconfig(
 		"https://greenhouse.example.com", "my-org", "not-valid-base64!!!",
 		"https://idp.example.com", "greenhouse", "", "", "",
+		"auth-provider", "", nil, "",
 	)
 	g.Expect(err).To(MatchError(ContainSubstring("not valid base64")))
 }
@@ -210,6 +246,7 @@ func TestBuildOIDCKubeconfig_MatchesRealGreenhouseShape(t *testing.T) {
 		"",
 		"groups",
 		"",
+		"auth-provider", "", nil, "",
 	)
 	g.Expect(err).To(BeNil())
 
@@ -461,7 +498,8 @@ func TestResolveIncomingKubeconfig_DataBlob(t *testing.T) {
 	want := realGreenhouseKubeconfig("sap-cna")
 	bootstrapData = encodeKubeconfig(t, want)
 	bootstrapOrg = ""
-	t.Cleanup(func() { bootstrapData = ""; bootstrapOrg = "" })
+	bootstrapAuthType = "auth-provider"
+	t.Cleanup(func() { bootstrapData = ""; bootstrapOrg = ""; bootstrapAuthType = "" })
 
 	cfg, org, err := resolveIncomingKubeconfig()
 	g.Expect(err).To(BeNil())
@@ -473,13 +511,42 @@ func TestResolveIncomingKubeconfig_DataBlob(t *testing.T) {
 	g.Expect(cfg.Contexts["greenhouse-sap-cna"].Namespace).To(Equal("sap-cna"))
 }
 
+func TestResolveIncomingKubeconfig_DataBlobExecPlugin(t *testing.T) {
+	g := NewWithT(t)
+
+	want := realGreenhouseKubeconfig("sap-cna")
+	bootstrapData = encodeKubeconfig(t, want)
+	bootstrapOrg = ""
+	bootstrapAuthType = "exec-plugin"
+	bootstrapKubeloginPath = "go" // use a binary that exists in CI
+	bootstrapKubeloginArgs = nil
+	bootstrapTokenCacheDir = "/tmp/token-cache"
+	t.Cleanup(func() {
+		bootstrapData = ""
+		bootstrapOrg = ""
+		bootstrapAuthType = ""
+		bootstrapKubeloginPath = ""
+		bootstrapKubeloginArgs = nil
+		bootstrapTokenCacheDir = ""
+	})
+
+	cfg, _, err := resolveIncomingKubeconfig()
+	g.Expect(err).To(BeNil())
+	ai := cfg.AuthInfos["greenhouse-sap-cna"]
+	g.Expect(ai.AuthProvider).To(BeNil())
+	g.Expect(ai.Exec).NotTo(BeNil())
+	g.Expect(ai.Exec.Command).To(Equal("go"))
+	g.Expect(ai.Exec.Args).To(ContainElement("--oidc-issuer-url=https://idp.global.cloud.sap"))
+}
+
 func TestResolveIncomingKubeconfig_DataBlobWithOrgOverride(t *testing.T) {
 	g := NewWithT(t)
 
 	want := realGreenhouseKubeconfig("sap-cna")
 	bootstrapData = encodeKubeconfig(t, want)
 	bootstrapOrg = "override-org"
-	t.Cleanup(func() { bootstrapData = ""; bootstrapOrg = "" })
+	bootstrapAuthType = "auth-provider"
+	t.Cleanup(func() { bootstrapData = ""; bootstrapOrg = ""; bootstrapAuthType = "" })
 
 	_, org, err := resolveIncomingKubeconfig()
 	g.Expect(err).To(BeNil())
@@ -561,6 +628,7 @@ func TestResolveIncomingKubeconfig_IndividualFlags(t *testing.T) {
 	bootstrapClientSecret = ""
 	bootstrapExtraScopes = "groups"
 	bootstrapNamespace = ""
+	bootstrapAuthType = "auth-provider"
 	t.Cleanup(func() {
 		bootstrapServer = ""
 		bootstrapOrg = ""
@@ -569,6 +637,7 @@ func TestResolveIncomingKubeconfig_IndividualFlags(t *testing.T) {
 		bootstrapClientSecret = ""
 		bootstrapExtraScopes = ""
 		bootstrapNamespace = ""
+		bootstrapAuthType = ""
 	})
 
 	cfg, org, err := resolveIncomingKubeconfig()
@@ -657,6 +726,7 @@ func TestBootstrapCmd_DataBlob_WritesCorrectKubeconfig(t *testing.T) {
 		"--data=" + data,
 		"--context-name=greenhouse-sap-cna",
 		"--set-current-context",
+		"--auth-type=auth-provider",
 		"--kubeconfig=" + dest,
 	})
 	g.Expect(err).To(BeNil())
@@ -703,6 +773,7 @@ func TestBootstrapCmd_IndividualFlags_WritesOIDCKubeconfig(t *testing.T) {
 		"--greenhouse-client-secret=",
 		"--greenhouse-extra-scopes=groups",
 		"--greenhouse-ca-data=" + caB64,
+		"--auth-type=auth-provider",
 		"--context-name=greenhouse-sap-cna",
 		"--set-current-context",
 		"--kubeconfig=" + dest,
@@ -739,6 +810,7 @@ func TestBootstrapCmd_IndividualFlags_DataAndIndividualFlagsProduceSameShape(t *
 		"--greenhouse-client-secret=",
 		"--greenhouse-extra-scopes=groups",
 		"--greenhouse-ca-data=" + caB64,
+		"--auth-type=auth-provider",
 		"--context-name=greenhouse-sap-cna",
 		"--kubeconfig=" + dest1,
 	})
@@ -751,6 +823,7 @@ func TestBootstrapCmd_IndividualFlags_DataAndIndividualFlagsProduceSameShape(t *
 	_, _, err = runBootstrapCmd(t, []string{
 		"--data=" + data,
 		"--context-name=greenhouse-sap-cna",
+		"--auth-type=auth-provider",
 		"--kubeconfig=" + dest2,
 	})
 	g.Expect(err).To(BeNil())
@@ -788,6 +861,7 @@ func TestBootstrapCmd_DryRun_DoesNotWriteFile(t *testing.T) {
 		"--context-name=greenhouse-sap-cna",
 		"--kubeconfig=" + dest,
 		"--dry-run",
+		"--auth-type=auth-provider",
 	})
 	g.Expect(err).To(BeNil())
 	g.Expect(stdout).To(ContainSubstring("Dry-run"))
@@ -809,6 +883,7 @@ func TestBootstrapCmd_Idempotent(t *testing.T) {
 		"--data=" + data,
 		"--context-name=greenhouse-sap-cna",
 		"--kubeconfig=" + dest,
+		"--auth-type=auth-provider",
 	}
 
 	_, _, err := runBootstrapCmd(t, args)
@@ -834,6 +909,7 @@ func TestBootstrapCmd_ContextRename(t *testing.T) {
 		"--data=" + data,
 		"--context-name=gh-prod", // user picks a custom name
 		"--set-current-context",
+		"--auth-type=auth-provider",
 		"--kubeconfig=" + dest,
 	})
 	g.Expect(err).To(BeNil())
@@ -865,6 +941,7 @@ func TestBootstrapCmd_PreservesExistingUnmanagedEntries(t *testing.T) {
 	_, _, err := runBootstrapCmd(t, []string{
 		"--data=" + data,
 		"--context-name=greenhouse-sap-cna",
+		"--auth-type=auth-provider",
 		"--kubeconfig=" + dest,
 	})
 	g.Expect(err).To(BeNil())
@@ -890,6 +967,7 @@ func TestBootstrapCmd_CreatesKubeconfigFileWhenAbsent(t *testing.T) {
 	_, _, err := runBootstrapCmd(t, []string{
 		"--data=" + data,
 		"--context-name=greenhouse-sap-cna",
+		"--auth-type=auth-provider",
 		"--kubeconfig=" + dest,
 	})
 	g.Expect(err).To(BeNil())
@@ -909,6 +987,7 @@ func TestBootstrapCmd_JSONOutput(t *testing.T) {
 	stdout, _, err := runBootstrapCmd(t, []string{
 		"--data=" + data,
 		"--context-name=greenhouse-sap-cna",
+		"--auth-type=auth-provider",
 		"--kubeconfig=" + dest,
 		"-o", "json",
 	})
@@ -944,6 +1023,7 @@ func TestBootstrapCmd_RawBase64Encoding(t *testing.T) {
 	_, _, err = runBootstrapCmd(t, []string{
 		"--data=" + data,
 		"--context-name=greenhouse-sap-cna",
+		"--auth-type=auth-provider",
 		"--kubeconfig=" + dest,
 	})
 	g.Expect(err).To(BeNil())

@@ -12,7 +12,6 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"slices"
 	"strings"
 
@@ -58,18 +57,7 @@ func init() {
 	syncCmd.Flags().StringVar(&authType, "auth-type", "exec-plugin", "Auth credential style: exec-plugin (kubelogin) or auth-provider (legacy)")
 	syncCmd.Flags().StringVar(&kubeloginPath, "kubelogin-path", "kubelogin", "Path to the kubelogin binary (used with --auth-type=exec-plugin)")
 	syncCmd.Flags().StringSliceVar(&kubeloginExtraArgs, "kubelogin-extra-args", nil, "Additional arguments passed to the kubelogin exec plugin")
-	defaultTokenCacheDir := os.Getenv("HOME")
-	if defaultTokenCacheDir == "" {
-		if home, err := os.UserHomeDir(); err == nil {
-			defaultTokenCacheDir = home
-		}
-	}
-	if defaultTokenCacheDir != "" {
-		defaultTokenCacheDir = filepath.Join(defaultTokenCacheDir, ".kube", "cache", "oidc-login")
-	} else {
-		defaultTokenCacheDir = filepath.Join("~", ".kube", "cache", "oidc-login")
-	}
-	syncCmd.Flags().StringVar(&kubeloginTokenCacheDir, "kubelogin-token-cache-dir", defaultTokenCacheDir, "Directory for OIDC token cache files")
+	syncCmd.Flags().StringVar(&kubeloginTokenCacheDir, "kubelogin-token-cache-dir", defaultOIDCTokenCacheDir(), "Directory for OIDC token cache files")
 
 	syncCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview changes without writing to the kubeconfig file")
 	syncCmd.Flags().BoolVar(&includeNotReady, "include-not-ready", false, "Also merge clusters whose Ready condition is False (spec data must be present)")
@@ -640,6 +628,7 @@ func buildKubeloginArgs(cfg map[string]string, extra []string, tokenCacheDir str
 			}
 		}
 	}
+	tokenCacheDirOverride := ""
 	if v := cfg["auth-request-extra-params"]; v != "" {
 		args = append(args, "--oidc-auth-request-extra-params="+v)
 		// If connector_id is used, use a separate token cache directory to avoid collisions
@@ -650,11 +639,16 @@ func buildKubeloginArgs(cfg map[string]string, extra []string, tokenCacheDir str
 			if len(kv) == 2 && strings.TrimSpace(kv[0]) == "connector_id" {
 				connectorID := strings.TrimSpace(kv[1])
 				if connectorID != "" {
-					args = append(args, fmt.Sprintf("--token-cache-dir=%s/%s", tokenCacheDir, connectorID))
+					tokenCacheDirOverride = fmt.Sprintf("%s/%s", tokenCacheDir, connectorID)
 				}
 				break
 			}
 		}
+	}
+	if tokenCacheDirOverride != "" {
+		args = append(args, "--token-cache-dir="+tokenCacheDirOverride)
+	} else if tokenCacheDir != "" {
+		args = append(args, "--token-cache-dir="+tokenCacheDir)
 	}
 	// allow caller to inject additional flags
 	if len(extra) > 0 {

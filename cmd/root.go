@@ -92,6 +92,20 @@ func init() {
 
 // resolveKubeconfig returns the kubeconfig path to use.
 // viperKey is the viper key for the flag (e.g. "kubeconfig", "greenhouse-cluster-kubeconfig").
+// defaultOIDCTokenCacheDir returns the default directory for kubelogin token cache files.
+func defaultOIDCTokenCacheDir() string {
+	dir := os.Getenv("HOME")
+	if dir == "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			dir = home
+		}
+	}
+	if dir != "" {
+		return filepath.Join(dir, ".kube", "cache", "oidc-login")
+	}
+	return filepath.Join("~", ".kube", "cache", "oidc-login")
+}
+
 // When the key was not explicitly set by the user (via flag, CLOUDCTL_* env var, or config file)
 // and the standard KUBECONFIG env var is set, it returns "" so that client-go uses its standard
 // multi-file loading rules. An explicitly provided value is always returned as-is, after tilde
