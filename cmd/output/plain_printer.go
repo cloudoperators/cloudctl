@@ -38,12 +38,6 @@ func (p *plainPrinter) Print(v any) error {
 		// List clusters that need attention first.
 		for _, c := range t.Clusters {
 			switch c.Status {
-			case ClusterSyncStatusSkipped:
-				reason := c.Reason
-				if reason == "" {
-					reason = "not ready"
-				}
-				w("  [-] %s — skipped (%s)\n", c.Name, reason)
 			case ClusterSyncStatusFailed:
 				reason := c.Reason
 				if reason == "" {
@@ -61,13 +55,13 @@ func (p *plainPrinter) Print(v any) error {
 		// Summary sentence.
 		switch {
 		case t.Failed > 0 && t.Skipped > 0:
-			w("Synced %d of %d cluster(s). %d skipped, %d failed.\n",
+			w("Synced %d of %d cluster(s). %d not ready, %d failed.\n",
 				t.Synced, total, t.Skipped, t.Failed)
 		case t.Failed > 0:
 			w("Synced %d of %d cluster(s). %d failed.\n",
 				t.Synced, total, t.Failed)
 		case t.Skipped > 0:
-			w("Synced %d of %d cluster(s). %d skipped (not ready).\n",
+			w("Synced %d of %d cluster(s). %d not ready.\n",
 				t.Synced, total, t.Skipped)
 		default:
 			if total == 1 {
