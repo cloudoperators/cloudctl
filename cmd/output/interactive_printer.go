@@ -199,6 +199,37 @@ func (p *interactivePrinter) printSyncResult(r SyncResult) error {
 		}
 	}
 
+	// Progress bar (or empty-state message).
+	if total == 0 {
+		w("%s\n", styleFaint.Render("No clusters found to sync."))
+	} else {
+		const barWidth = 32
+		filled := (r.Synced * barWidth) / total
+		bar := styleGreen.Render(strings.Repeat("█", filled)) +
+			styleFaint.Render(strings.Repeat("░", barWidth-filled))
+
+		var annotation string
+		switch {
+		case r.Failed > 0 && r.Skipped > 0:
+			annotation = fmt.Sprintf("%s  %s",
+				styleFaint.Render(fmt.Sprintf("%d clusters skipped (not ready — run with --include-not-ready to force)", r.Skipped)),
+				styleRed.Render(fmt.Sprintf("%d failed", r.Failed)),
+			)
+		case r.Failed > 0:
+			annotation = styleRed.Render(fmt.Sprintf("%d failed", r.Failed))
+		case r.Skipped > 0:
+			annotation = styleFaint.Render(fmt.Sprintf("%d clusters skipped (not ready — run with --include-not-ready to force)", r.Skipped))
+		default:
+			annotation = styleGreen.Render("All clusters synced successfully.")
+		}
+
+		w("  %s  %s/%d  %s  ·  %s\n\n", bar,
+			styleGreen.Render(fmt.Sprintf("%d", r.Synced)), total,
+			styleBold.Render("Synced"),
+			annotation,
+		)
+	}
+
 	if len(issues) > 0 {
 		const (
 			colCluster = 30
@@ -223,35 +254,6 @@ func (p *interactivePrinter) printSyncResult(r SyncResult) error {
 		w("\n")
 	}
 
-	// Summary sentence.
-	var summary string
-	switch {
-	case total == 0:
-		summary = styleFaint.Render("No clusters found to sync.")
-	case r.Failed > 0 && r.Skipped > 0:
-		summary = fmt.Sprintf("%s  %s  %s",
-			styleGreen.Render(fmt.Sprintf("Synced %d of %d cluster(s).", r.Synced, total)),
-			styleFaint.Render(fmt.Sprintf("%d not ready,", r.Skipped)),
-			styleRed.Render(fmt.Sprintf("%d failed.", r.Failed)),
-		)
-	case r.Failed > 0:
-		summary = fmt.Sprintf("%s  %s",
-			styleGreen.Render(fmt.Sprintf("Synced %d of %d cluster(s).", r.Synced, total)),
-			styleRed.Render(fmt.Sprintf("%d failed.", r.Failed)),
-		)
-	case r.Skipped > 0:
-		summary = fmt.Sprintf("%s  %s",
-			styleGreen.Render(fmt.Sprintf("Synced %d of %d cluster(s).", r.Synced, total)),
-			styleFaint.Render(fmt.Sprintf("%d not ready.", r.Skipped)),
-		)
-	default:
-		if total == 1 {
-			summary = styleGreen.Render("Synced 1 cluster successfully.")
-		} else {
-			summary = styleGreen.Render(fmt.Sprintf("Synced all %d clusters successfully.", total))
-		}
-	}
-	w("%s\n", summary)
 	return writeErr
 }
 
