@@ -141,13 +141,13 @@ func TestPlainPrinter_SyncResult(t *testing.T) {
 	out := buf.String()
 	// Synced clusters are not listed individually.
 	g.Expect(out).ToNot(ContainSubstring("[+]"))
-	// Skipped and failed clusters appear with their reason.
-	g.Expect(out).To(ContainSubstring("[-] b"))
+	// Skipped (not ready) clusters are not listed — only failed ones appear.
+	g.Expect(out).ToNot(ContainSubstring("[-] b"))
 	g.Expect(out).To(ContainSubstring("[!] c"))
 	g.Expect(out).To(ContainSubstring("error"))
 	// Summary is a human-readable sentence.
 	g.Expect(out).To(ContainSubstring("Synced 1 of 3"))
-	g.Expect(out).To(ContainSubstring("1 skipped"))
+	g.Expect(out).To(ContainSubstring("1 not ready"))
 	g.Expect(out).To(ContainSubstring("1 failed"))
 }
 

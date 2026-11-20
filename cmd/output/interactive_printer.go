@@ -191,12 +191,43 @@ func (p *interactivePrinter) printSyncResult(r SyncResult) error {
 		w("\n")
 	}
 
-	// Collect only clusters that need attention.
+	// Collect only clusters that need attention (failed; skipped/not-ready are expected).
 	var issues []ClusterSyncResult
 	for _, c := range r.Clusters {
-		if c.Status != ClusterSyncStatusSynced {
+		if c.Status == ClusterSyncStatusFailed {
 			issues = append(issues, c)
 		}
+	}
+
+	// Progress bar (or empty-state message).
+	if total == 0 {
+		w("%s\n", styleFaint.Render("No clusters found to sync."))
+	} else {
+		const barWidth = 32
+		filled := (r.Synced * barWidth) / total
+		bar := styleGreen.Render(strings.Repeat("█", filled)) +
+			styleFaint.Render(strings.Repeat("░", barWidth-filled))
+
+		var annotation string
+		switch {
+		case r.Failed > 0 && r.Skipped > 0:
+			annotation = fmt.Sprintf("%s  %s",
+				styleFaint.Render(fmt.Sprintf("%d clusters skipped (not ready — run with --include-not-ready to force)", r.Skipped)),
+				styleRed.Render(fmt.Sprintf("%d failed", r.Failed)),
+			)
+		case r.Failed > 0:
+			annotation = styleRed.Render(fmt.Sprintf("%d failed", r.Failed))
+		case r.Skipped > 0:
+			annotation = styleFaint.Render(fmt.Sprintf("%d clusters skipped (not ready — run with --include-not-ready to force)", r.Skipped))
+		default:
+			annotation = styleGreen.Render("All clusters synced successfully.")
+		}
+
+		w("  %s  %s/%d  %s  ·  %s\n\n", bar,
+			styleGreen.Render(fmt.Sprintf("%d", r.Synced)), total,
+			styleBold.Render("Synced"),
+			annotation,
+		)
 	}
 
 	if len(issues) > 0 {
@@ -208,65 +239,21 @@ func (p *interactivePrinter) printSyncResult(r SyncResult) error {
 		w("%s\n", styleHeader.Render(header))
 
 		for _, c := range issues {
-			var icon, statusStr string
-			switch c.Status {
-			case ClusterSyncStatusFailed:
-				icon = styleRed.Render("✗")
-				statusStr = styleRed.Render("failed")
-			default:
-				icon = styleYellow.Render("!")
-				statusStr = styleYellow.Render("skipped")
-			}
-
 			name := c.Name
 			if len(name) > colCluster-2 {
 				name = name[:colCluster-5] + "..."
 			}
 			reason := c.Reason
 			if reason == "" {
-				if c.Status == ClusterSyncStatusSkipped {
-					reason = "not ready"
-				} else {
-					reason = "unknown error"
-				}
+				reason = "unknown error"
 			}
-
 			w("%s %-*s  %-*s  %s\n",
-				icon, colCluster-1, name, colStatus, statusStr, reason,
+				styleRed.Render("✗"), colCluster-1, name, colStatus, styleRed.Render("failed"), reason,
 			)
 		}
 		w("\n")
 	}
 
-	// Summary sentence.
-	var summary string
-	switch {
-	case total == 0:
-		summary = styleFaint.Render("No clusters found to sync.")
-	case r.Failed > 0 && r.Skipped > 0:
-		summary = fmt.Sprintf("%s  %s  %s",
-			styleGreen.Render(fmt.Sprintf("Synced %d of %d cluster(s).", r.Synced, total)),
-			styleYellow.Render(fmt.Sprintf("%d skipped,", r.Skipped)),
-			styleRed.Render(fmt.Sprintf("%d failed.", r.Failed)),
-		)
-	case r.Failed > 0:
-		summary = fmt.Sprintf("%s  %s",
-			styleGreen.Render(fmt.Sprintf("Synced %d of %d cluster(s).", r.Synced, total)),
-			styleRed.Render(fmt.Sprintf("%d failed.", r.Failed)),
-		)
-	case r.Skipped > 0:
-		summary = fmt.Sprintf("%s  %s",
-			styleGreen.Render(fmt.Sprintf("Synced %d of %d cluster(s).", r.Synced, total)),
-			styleYellow.Render(fmt.Sprintf("%d skipped (not ready).", r.Skipped)),
-		)
-	default:
-		if total == 1 {
-			summary = styleGreen.Render("Synced 1 cluster successfully.")
-		} else {
-			summary = styleGreen.Render(fmt.Sprintf("Synced all %d clusters successfully.", total))
-		}
-	}
-	w("%s\n", summary)
 	return writeErr
 }
 

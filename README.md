@@ -17,7 +17,7 @@ Download the latest binary from the [releases page](https://github.com/cloudoper
 
 ```sh
 # macOS / Linux
-curl -Lo cloudctl https://github.com/cloudoperators/cloudctl/releases/latest/download/cloudctl-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)
+curl -L https://github.com/cloudoperators/cloudctl/releases/latest/download/cloudctl_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m).tar.gz | tar -xz cloudctl
 chmod +x cloudctl
 sudo mv cloudctl /usr/local/bin/
 ```

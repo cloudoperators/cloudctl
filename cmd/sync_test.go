@@ -1060,34 +1060,34 @@ func TestResolveDisplaySources(t *testing.T) {
 	sep := string(os.PathListSeparator)
 
 	tests := []struct {
-		name           string
-		explicitPath   string
-		kubeconfig     string
-		wantSources    string
+		name         string
+		explicitPath string
+		kubeconfig   string
+		wantSources  string
 	}{
 		{
-			name:        "explicit path returned as-is",
+			name:         "explicit path returned as-is",
 			explicitPath: "/explicit/kubeconfig",
-			kubeconfig:  "/env/kubeconfig",
-			wantSources: "/explicit/kubeconfig",
+			kubeconfig:   "/env/kubeconfig",
+			wantSources:  "/explicit/kubeconfig",
 		},
 		{
-			name:        "single KUBECONFIG entry returned as-is",
+			name:         "single KUBECONFIG entry returned as-is",
 			explicitPath: "",
-			kubeconfig:  "/single/kubeconfig",
-			wantSources: "/single/kubeconfig",
+			kubeconfig:   "/single/kubeconfig",
+			wantSources:  "/single/kubeconfig",
 		},
 		{
-			name:        "multi-file KUBECONFIG: full list returned",
+			name:         "multi-file KUBECONFIG: full list returned",
 			explicitPath: "",
-			kubeconfig:  "/first" + sep + "/second" + sep + "/third",
-			wantSources: "/first" + sep + "/second" + sep + "/third",
+			kubeconfig:   "/first" + sep + "/second" + sep + "/third",
+			wantSources:  "/first" + sep + "/second" + sep + "/third",
 		},
 		{
-			name:        "empty KUBECONFIG falls back to default",
+			name:         "empty KUBECONFIG falls back to default",
 			explicitPath: "",
-			kubeconfig:  "",
-			wantSources: clientcmd.RecommendedHomeFile,
+			kubeconfig:   "",
+			wantSources:  clientcmd.RecommendedHomeFile,
 		},
 	}
 
