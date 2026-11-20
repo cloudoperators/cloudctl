@@ -22,6 +22,11 @@ chmod +x cloudctl
 sudo mv cloudctl /usr/local/bin/
 ```
 
+> **macOS note:** After the first run attempt, macOS may block the binary. Go to **System Settings → Privacy & Security** and approve it, or remove the quarantine flag directly:
+> ```sh
+> sudo xattr -d com.apple.quarantine /usr/local/bin/cloudctl
+> ```
+
 Or build from source (requires Go 1.25+):
 
 ```sh
