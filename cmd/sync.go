@@ -593,18 +593,29 @@ func writeConfig(config *clientcmdapi.Config, filepath string) error {
 }
 
 // managedNameFunc prefixes the given name with the configured prefix.
+// When prefix is empty the name is returned as-is (no separator added).
 func managedNameFunc(name string) string {
-	return fmt.Sprintf("%s:%s", prefix, name)
+	if prefix == "" {
+		return name
+	}
+	return prefix + ":" + name
 }
 
 // unmanagedNameFunc removes the prefix from the given managed name.
 // Returns the raw server-side name.
 func unmanagedNameFunc(managedName string) string {
+	if prefix == "" {
+		return managedName
+	}
 	return strings.TrimPrefix(managedName, prefix+":")
 }
 
 // isManaged checks if the given name is managed by cloudctl based on the prefix.
+// When prefix is empty every name is considered managed.
 func isManaged(name string) bool {
+	if prefix == "" {
+		return true
+	}
 	return strings.HasPrefix(name, prefix+":")
 }
 
